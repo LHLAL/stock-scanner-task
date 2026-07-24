@@ -9,7 +9,14 @@ import objc
 import rumps
 
 from app.config import AppConfig, HoldingConfig, IndexConfig, save_config
-from app.fetcher import StockFetcher, StockQuote
+from app.multi_fetcher import (
+    RotatingMultiFetcher,
+    TencentSource,
+    SinaSource,
+    TDXSource,
+    HAS_MOOTDX,
+)
+from app.fetcher import StockQuote
 from app.monitor import Alert, PriceMonitor, RiskAlert, is_market_open
 
 logger = logging.getLogger(__name__)
@@ -59,7 +66,23 @@ class StockMenuBarApp(rumps.App):
         self._config = config
         self._holdings_config = config.holdings
         self._indices_config: List[IndexConfig] = config.indices
-        self._fetcher = StockFetcher(api_template=config.tencent_api_template)
+        # Build sources list based on config
+        sources = []
+        ds_config = config.data_sources
+        if "tencent" in ds_config.enabled:
+            sources.append(TencentSource(api_template=config.tencent_api_template))
+        if "sina" in ds_config.enabled:
+            sources.append(SinaSource())
+        if "tdx" in ds_config.enabled and HAS_MOOTDX:
+            sources.append(TDXSource())
+        # Fallback to Tencent if no sources configured
+        if not sources:
+            sources.append(TencentSource(api_template=config.tencent_api_template))
+        self._fetcher = RotatingMultiFetcher(
+            sources,
+            successive_fail_limit=ds_config.successive_fail_limit,
+            cooldown_seconds=ds_config.cooldown_seconds,
+        )
         self._monitor = PriceMonitor(
             alert_threshold_pct=config.alert_threshold_pct,
             sudden_threshold_pct=config.sudden_threshold_pct,

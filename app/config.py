@@ -5,6 +5,18 @@ from typing import List, Optional
 
 
 @dataclass
+class DataSourceConfig:
+    enabled: List[str] = field(
+        default_factory=lambda: ["tencent", "sina", "tdx"]
+    )
+    order: List[str] = field(
+        default_factory=lambda: ["tencent", "sina", "tdx"]
+    )
+    successive_fail_limit: int = 3
+    cooldown_seconds: int = 60
+
+
+@dataclass
 class HoldingConfig:
     code: str
     name: str
@@ -31,6 +43,7 @@ class AppConfig:
     poll_interval_seconds: int = 5
     tencent_api_template: str = "http://qt.gtimg.cn/q={codes}"
     db_path: str = "price_history.db"
+    data_sources: DataSourceConfig = field(default_factory=DataSourceConfig)
 
 
 def _get_project_root() -> str:
@@ -106,4 +119,10 @@ def load_config(path: Optional[str] = None) -> AppConfig:
         poll_interval_seconds=data.get("poll_interval_seconds", 5),
         tencent_api_template=data.get("tencent_api_template", "http://qt.gtimg.cn/q={codes}"),
         db_path=data.get("db_path", "price_history.db"),
+        data_sources=DataSourceConfig(
+            enabled=data.get("data_sources", {}).get("enabled", ["tencent", "sina", "tdx"]),
+            order=data.get("data_sources", {}).get("order", ["tencent", "sina", "tdx"]),
+            successive_fail_limit=data.get("data_sources", {}).get("successive_fail_limit", 3),
+            cooldown_seconds=data.get("data_sources", {}).get("cooldown_seconds", 60),
+        ),
     )
