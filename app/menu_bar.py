@@ -12,7 +12,6 @@ from app.config import AppConfig, HoldingConfig, IndexConfig, save_config
 from app.multi_fetcher import (
     RotatingMultiFetcher,
     TencentSource,
-    SinaSource,
     TDXSource,
     HAS_MOOTDX,
 )
@@ -71,8 +70,6 @@ class StockMenuBarApp(rumps.App):
         ds_config = config.data_sources
         if "tencent" in ds_config.enabled:
             sources.append(TencentSource(api_template=config.tencent_api_template))
-        if "sina" in ds_config.enabled:
-            sources.append(SinaSource())
         if "tdx" in ds_config.enabled and HAS_MOOTDX:
             sources.append(TDXSource())
         # Fallback to Tencent if no sources configured

@@ -7,10 +7,10 @@ from typing import List, Optional
 @dataclass
 class DataSourceConfig:
     enabled: List[str] = field(
-        default_factory=lambda: ["tencent", "sina", "tdx"]
+        default_factory=lambda: ["tencent", "tdx"]
     )
     order: List[str] = field(
-        default_factory=lambda: ["tencent", "sina", "tdx"]
+        default_factory=lambda: ["tencent", "tdx"]
     )
     successive_fail_limit: int = 3
     cooldown_seconds: int = 60
@@ -120,8 +120,8 @@ def load_config(path: Optional[str] = None) -> AppConfig:
         tencent_api_template=data.get("tencent_api_template", "http://qt.gtimg.cn/q={codes}"),
         db_path=data.get("db_path", "price_history.db"),
         data_sources=DataSourceConfig(
-            enabled=data.get("data_sources", {}).get("enabled", ["tencent", "sina", "tdx"]),
-            order=data.get("data_sources", {}).get("order", ["tencent", "sina", "tdx"]),
+            enabled=data.get("data_sources", {}).get("enabled", ["tencent", "tdx"]),
+            order=data.get("data_sources", {}).get("order", ["tencent", "tdx"]),
             successive_fail_limit=data.get("data_sources", {}).get("successive_fail_limit", 3),
             cooldown_seconds=data.get("data_sources", {}).get("cooldown_seconds", 60),
         ),

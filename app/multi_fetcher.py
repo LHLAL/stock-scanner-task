@@ -368,7 +368,7 @@ class RotatingMultiFetcher:
     - 三路全失败 → 返回最近缓存数据 + 记录 ERROR
 
     使用示例：
-        sources = [TencentSource(), SinaSource(), TDXSource()]
+        sources = [TencentSource(), TDXSource()]
         fetcher = RotatingMultiFetcher(sources)
         quotes = fetcher.fetch(["sh600519", "sz000001"])
     """
