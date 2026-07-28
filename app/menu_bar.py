@@ -95,8 +95,13 @@ class StockMenuBarApp(rumps.App):
         self._portfolio_item: rumps.MenuItem = rumps.MenuItem("持仓: 加载中...")
         self._timestamp_item: rumps.MenuItem = rumps.MenuItem("刷新于: --")
         self._running = False
+        self._heartbeat_count: int = 0
         self._ui_updater = _UIUpdater.alloc().initWithApp_(self)
         self._build_menu()
+        logger.info("📊 监控已启动: %d 只持仓, %d 个指数, 刷新间隔 %ds",
+                    len(self._config.holdings),
+                    len(self._indices_config),
+                    self._config.poll_interval_seconds)
 
     def _build_menu(self) -> None:
         self.menu.clear()
@@ -417,6 +422,10 @@ class StockMenuBarApp(rumps.App):
     def _refresh_loop(self) -> None:
         while self._running:
             self._do_fetch()
+            self._heartbeat_count += 1
+            if 1 <= self._heartbeat_count <= 5 or self._heartbeat_count % 60 == 0:
+                elapsed_minutes = self._heartbeat_count * self._config.poll_interval_seconds // 60
+                logger.info("✓ 第 %d 轮刷新完成 (约 %d 分钟)", self._heartbeat_count, elapsed_minutes)
             self._ui_updater.performSelectorOnMainThread_withObject_waitUntilDone_(
                 self._ui_updater.updateUI_, None, False
             )
