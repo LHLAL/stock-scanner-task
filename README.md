@@ -9,7 +9,7 @@ macOS 状态栏实时看盘工具。在菜单栏显示 A 股持仓股的实时�
 - **多数据源热备**：腾讯行情（HTTP） + 通达信（TCP 7709，可选），单源失败自动熔断 + 切换 + 冷却
 - **轮询可调**：交易时段 5 秒 / 收盘后 60 秒；`poll_interval_seconds` 自由配置
 - **持仓 CRUD**：菜单内置「添加 / 编辑 / 删除」对话框，编辑后自动写回 `config.json`
-- **📰 新闻情报**：财联社电报 → 关键词预筛 → 本地 Ollama LLM 分析 → 板块/个股关联 → 命中持仓弹通知（详见下方）
+- **📰 新闻情报**：财联社电报 → 关键词预筛 → 本地 Ollama LLM 分析（含卡脖子瓶颈三指标/四柱/产业趋势） → 板块/个股关联 → 命中持仓或瓶颈信号弹通知（详见下方）
 - **多种告警**（全部 30 分钟冷却，避免骚扰）：
   - **阈值告警**：`change_pct` 超过 `alert_threshold_pct` 时弹窗
   - **异动检测**：与近 3 轮均值偏差 > `sudden_threshold_pct` 时弹窗
@@ -230,10 +230,72 @@ echo 'export OLLAMA_API_KEY=your_key_here' >> ~/.zshrc
 
 - **盘中 30 秒 / 盘后 5 分钟** 自动切换轮询频率（复用 `is_market_open()`）
 - **关键词预筛**（央行/降息/突发=+1.0，直播/抽奖=-0.5）过滤 80% 噪声
-- **LLM 分析**：本地 Ollama 调用 `minimax-m2.5:cloud`，强制 JSON 输出
+- **LLM 分析**（按"卡脖子供应链瓶颈理论"）：本地 Ollama 调用 `minimax-m2.5:cloud`，强制 JSON 输出，包含 5 维核心 + 瓶颈 9 维增强
 - **板块匹配**：LLM 输出 sectors 通过 fuzzy match 映射到 `docs/sector_dict.json`（约 70 板块 / 230 只代表股）
-- **通知触发**：`confidence ≥ 0.7` 或命中现有持仓（阈值 0.5）
+- **通知触发**：`confidence ≥ 0.7` 或命中现有持仓（阈值 0.5）或**卡脖子信号**（is_kneck / 订单爆发 / 满产 / 毛利率上升）
 - **缓存**：news_cache 表去重 + 24h LLM 结果缓存
+
+### LLM 分析维度
+
+#### 核心 5 维（基础）
+
+| 维度 | 字段 | 用途 |
+|------|------|------|
+| 影响对象 | `sectors` + `stocks` | 板块匹配 + 命中持仓 |
+| 影响方向 | `direction` (bullish/bearish/neutral) | emoji + 标签 |
+| 置信度 | `confidence` (0-1) | 通知门控 |
+| 影响时效 | `time_horizon` (intraday/next_day/weekly) | 预留过滤 |
+| 因果推理 | `rationale` (≤80字) | 通知正文 |
+
+#### 瓶颈 9 维（增强）— 卡脖子投资哲学
+
+**三硬指标**（订单/产能/毛利率）：
+
+| 字段 | 取值 |
+|------|------|
+| `bottleneck_order_signal` | `none` / `mentioned` / **`strong`**（龙头排产排满 + 溢价拿货） |
+| `bottleneck_capacity_signal` | `none` / `expansion` / **`utilization_high`**（满产） / `inventory_warning`（扩产过快库存积压） |
+| `bottleneck_margin_signal` | `unknown` / **`rising`**（稳中有升 = 卡脖子核心证据）/ `stable` / `declining`（壁垒被破） |
+
+**卡脖子四柱**：
+
+| 字段 | 取值 |
+|------|------|
+| `is_kneck` | true / false |
+| `scarcity_pillars` | 数组：`tech_moat`（技术代差）/`single_point`（单点刚需）/`certification`（3-5年认证）/`long_cycle`（长周期） |
+
+**产业趋势判断**：
+
+| 字段 | 取值 |
+|------|------|
+| `news_category` | policy/order/capacity/financial/patent/supply_disruption/general |
+| `narrative_themes` | 标签数组：`AI算力`/`CPO`/`人形机器人`/`半导体设备`/`国产替代`/`光通信`/`特种气体`/`磷化铟`/... |
+| `trend_horizon_years` | 1-10（不可逆变化的窗口期） |
+| `industry_certainty` | `speculative`（投机）→ `emerging`（萌芽）→ `established`（确立）→ `dominant`（主导） |
+
+#### 通知与菜单增强
+
+- **badge 聚合**：`is_kneck` + 订单爆发 + 满产 + 毛利率上升 → `🔧卡脖子 📈订单爆发 ⚡满产 💹毛利率↑`
+- **菜单子项**显示：类型 + 卡脖子四柱 + 主题 + 三硬指标 + 趋势确定性 + 理由
+- **通知正文**：显示卡脖子稀缺性、主题、确定性、命中持仓
+
+#### 实际效果样例
+
+输入：「中际旭创：800G光模块订单排至2027年，产能持续满产」
+
+```
+summary: 800G光模块订单排至2027年，产能满产毛利率高，AI算力驱动CPO技术路线加速
+direction: bullish (0.85)
+news_category: order
+is_kneck: True
+scarcity_pillars: [tech_moat, single_point, long_cycle]
+bottleneck_order_signal: strong
+bottleneck_capacity_signal: utilization_high
+bottleneck_margin_signal: stable
+narrative_themes: [AI算力, CPO, 光通信, 国产替代]
+industry_certainty: emerging / 8y
+badge: 🔧卡脖子 📈订单爆发 ⚡满产
+```
 
 ### 限流
 

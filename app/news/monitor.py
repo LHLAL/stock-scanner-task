@@ -121,10 +121,19 @@ class NewsMonitor:
                 "confidence": analysis.confidence,
                 "time_horizon": analysis.time_horizon,
                 "rationale": analysis.rationale,
+                "news_category": analysis.news_category,
+                "bottleneck_order_signal": analysis.bottleneck_order_signal,
+                "bottleneck_capacity_signal": analysis.bottleneck_capacity_signal,
+                "bottleneck_margin_signal": analysis.bottleneck_margin_signal,
+                "is_kneck": analysis.is_kneck,
+                "scarcity_pillars": analysis.scarcity_pillars,
+                "trend_horizon_years": analysis.trend_horizon_years,
+                "industry_certainty": analysis.industry_certainty,
+                "narrative_themes": analysis.narrative_themes,
             }
             self._db.news_save_analysis(analysis_dict)
 
-            if analysis.is_high_confidence or hits_holdings:
+            if analysis.is_high_confidence or hits_holdings or analysis.is_bottleneck_signal:
                 self._notify(analysis, related, hits_holdings)
                 self._db.news_mark_notified(analysis.news_hash)
 
@@ -140,9 +149,18 @@ class NewsMonitor:
 
     def _notify(self, analysis: NewsAnalysis, related: List[str], hits_holdings: bool) -> None:
         """Emit a macOS notification for high-confidence or holdings-relevant news."""
-        title = f"{analysis.emoji} {analysis.summary[:40]}"
+        badge = analysis.badge
+        title = f"{analysis.category_emoji} {analysis.summary[:40]}"
         subtitle = f"{analysis.direction_label}  置信度 {analysis.confidence:.2f}"
+        if badge:
+            subtitle += f"  ·  {badge}"
         message = analysis.rationale
+        if analysis.is_kneck and analysis.scarcity_pillars:
+            message += f"\n\n🔧 卡脖子: {analysis.kness_pillars_label}"
+        if analysis.narrative_themes:
+            message += f"\n主题: {' / '.join(analysis.narrative_themes[:3])}"
+        if analysis.industry_certainty != "speculative":
+            message += f"\n确定性: {analysis.industry_certainty}  时长: {analysis.trend_horizon_years}年"
         if hits_holdings:
             message += f"\n\n🔔 命中持仓: {', '.join(sorted(set(related) & self._holdings))}"
         elif related:

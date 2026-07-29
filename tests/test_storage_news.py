@@ -122,3 +122,64 @@ class TestNewsAnalysis:
         assert result["sectors"] == ["半导体", "集成电路"]
         assert result["stocks"] == ["中芯国际", "海光信息"]
         assert result["summary"] == "中文"
+
+class TestEnhancedAnalysis:
+    def test_save_and_retrieve_enhanced_fields(self, temp_db_path):
+        db = PriceDB(temp_db_path)
+        data = {
+            "news_hash": "h1",
+            "summary": "AI 算力订单爆发",
+            "sectors": ["半导体"],
+            "stocks": ["sh688981"],
+            "direction": "bullish",
+            "confidence": 0.9,
+            "time_horizon": "intraday",
+            "rationale": "下游需求强劲",
+            "news_category": "order",
+            "bottleneck_order_signal": "strong",
+            "bottleneck_capacity_signal": "utilization_high",
+            "bottleneck_margin_signal": "rising",
+            "is_kneck": True,
+            "scarcity_pillars": ["tech_moat", "single_point"],
+            "trend_horizon_years": 5,
+            "industry_certainty": "established",
+            "narrative_themes": ["AI算力", "国产替代"],
+        }
+        db.news_save_analysis(data)
+        result = db.news_get_analysis("h1")
+        assert result["news_category"] == "order"
+        assert result["bottleneck_order_signal"] == "strong"
+        assert result["is_kneck"] is True
+        assert result["scarcity_pillars"] == ["tech_moat", "single_point"]
+        assert result["trend_horizon_years"] == 5
+        assert result["industry_certainty"] == "established"
+        assert result["narrative_themes"] == ["AI算力", "国产替代"]
+
+    def test_enhanced_defaults_when_table_empty(self, temp_db_path):
+        db = PriceDB(temp_db_path)
+        data = {
+            "news_hash": "h1",
+            "summary": "x",
+            "direction": "neutral",
+            "confidence": 0.3,
+        }
+        db.news_save_analysis(data)
+        result = db.news_get_analysis("h1")
+        assert result["news_category"] == "general"
+        assert result["is_kneck"] is False
+        assert result["scarcity_pillars"] == []
+
+    def test_recent_includes_enhanced_fields(self, temp_db_path):
+        db = PriceDB(temp_db_path)
+        data = {
+            "news_hash": "h1",
+            "summary": "x",
+            "direction": "bullish",
+            "confidence": 0.8,
+            "is_kneck": True,
+            "news_category": "patent",
+        }
+        db.news_save_analysis(data)
+        results = db.news_get_recent_analyses()
+        assert results[0]["is_kneck"] is True
+        assert results[0]["news_category"] == "patent"

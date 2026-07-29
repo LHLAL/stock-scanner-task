@@ -34,26 +34,56 @@ def keyword_score(title: str, content: str) -> float:
     )
 
 
-NEWS_ANALYSIS_PROMPT = """\u4f60\u662f A \u80a1\u5e02\u573a\u5206\u6790\u5e08\u3002\u8bf7\u9605\u8bfb\u4ee5\u4e0b\u65b0\u95fb\uff0c\u7ed9\u51fa\u4e25\u683c JSON \u5206\u6790\uff1a
+NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请按"卡脖子供应链瓶颈理论"分析以下新闻，给出严格 JSON。
 
-\u3010\u65b0\u95fb\u6807\u9898\u3011 {title}
-\u3010\u65b0\u95fb\u5185\u5bb9\u3011 {content}
+【新闻标题】 {title}
+【新闻内容】 {content}
 
-\u8f93\u51fa\uff08\u5fc5\u987b\u662f\u5408\u6cd5 JSON\uff0c\u4e0d\u8981 markdown \u5305\u88c5\uff09:
+输出（合法 JSON，不要 markdown 包装）:
 {{
-  "summary": "<\u4e00\u53e5\u8bdd\u603b\u7ed3\uff0c\u226430\u5b57>",
-  "sectors": ["<\u884c\u4e1a\u677f\u5757\u5927\u7c7b1>", "<\u884c\u4e1a\u677f\u5757\u5927\u7c7b\u00d72>"],
-  "stocks": ["<\u80a1\u7968\u540d\u6216\u4ee3\u7801>"],
+  "summary": "<一句话总结，≤30字>",
+  "sectors": ["<行业板块大类>"],
+  "stocks": ["<股票名或代码>"],
   "direction": "<bullish | bearish | neutral>",
   "confidence": <0.0-1.0>,
   "time_horizon": "<intraday | next_day | weekly>",
-  "rationale": "<\u226480\u5b57\u63a8\u7406>"
+  "rationale": "<≤80字事实推理>",
+
+  "news_category": "<policy|order|capacity|financial|patent|supply_disruption|general>",
+  "bottleneck_order_signal": "<none|mentioned|strong>",
+  "bottleneck_capacity_signal": "<none|expansion|utilization_high|inventory_warning>",
+  "bottleneck_margin_signal": "<unknown|rising|stable|declining>",
+  "is_kneck": <true|false>,
+  "scarcity_pillars": ["<tech_moat|single_point|certification|long_cycle>"],
+  "trend_horizon_years": <1-10>,
+  "industry_certainty": "<speculative|emerging|established|dominant>",
+  "narrative_themes": ["<AI算力|CPO|人形机器人|半导体设备|国产替代|光通信|特种气体|磷化铟|...>"]
 }}
 
-\u89c4\u5219\uff1a
-- \u53ea\u5728\u660e\u786e\u653f\u7b56/\u6570\u636e/\u4e8b\u4ef6\u65f6\u7ed9 bullish/bearish\uff0c\u6a21\u7cca\u65f6\u7ed9 neutral + confidence < 0.5
-- \u4e0d\u8981\u7ed9\u6295\u8d44\u5efa\u8bae\uff0c\u53ea\u505a\u4e8b\u5b9e\u5206\u6790
-- sectors \u5fc5\u987b\u662f\u884c\u4e1a\u5927\u7c7b\uff08\u534a\u5bfc\u4f53/\u767d\u9152/\u94f6\u884c\u7b49\uff09\uff0c\u4e0d\u8981\u7ed9\u4e2a\u80a1
+## 分析框架（卡脖子供应链瓶颈理论）
+
+### 1. 三硬指标（订单/产能/毛利率）
+- 订单爆发：龙头排产期是否排满？是否要溢价拿货？strong=订单合同明确+大单，mentioned=侧面提及
+- 产能利用率：expansion=扩产在建/投产，utilization_high=满产/扩产周期，inventory_warning=扩产过快库存积压
+- 毛利率：rising=稳中有升（卡脖子核心证据），stable=持平，declining=壁垒被破或价格战
+
+### 2. 卡脖子四柱（is_kneck=true 时填 pillars）
+- tech_moat：技术代差（需几十年工艺积累，非砸钱短期能追上）
+- single_point：单点刚需（一旦断供下游整个行业停摆）
+- certification：极高认证门槛（3-5 年验证周期，几乎永久的生意）
+- long_cycle：长周期替代难度
+
+### 3. 产业趋势判断
+- 只看未来 5-10 年不可逆变化（地缘政治国产替代、AI 算力、人形机器人），不看当下热点
+- certainty: speculative（投机）→ emerging（萌芽）→ established（确立）→ dominant（主导）
+
+### 通用规则
+- 仅在明确政策/数据/事件时给 bullish/bearish；模糊给 neutral + confidence < 0.5
+- 不要给投资建议，只做事实分析
+- sectors 必须是行业大类（半导体/白酒/银行等），不要给个股
+- news_category 必填，决定下游通知权重
+- narrative_themes 用简短标签（如 "AI算力"、"CPO"、"国产替代"），≤5 个
+- is_kneck 仅在新闻明显涉及卡脖子/单点关键环节时设为 true
 """
 
 

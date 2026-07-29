@@ -211,6 +211,104 @@ class ClsFetcher:
 
 **v1 不需要**；保留 `sign` 字段在配置中（默认 `null`），仅当未来真正需要时再启用。
 
+### 5.2 Ollama Cloud 模型接入 + 投资哲学（卡脖子供应链瓶颈理论）
+
+LLM prompt 嵌入用户的**卡脖子投资哲学**，强制结构化输出三层分析：
+
+#### 第一层：核心 5 维（基础信号）
+
+| 字段 | 取值 | 用途 |
+|------|------|------|
+| `summary` | ≤30字 | 菜单 / 通知标题 |
+| `direction` | bullish / bearish / neutral | emoji + 标签 |
+| `confidence` | 0.0-1.0 | 通知门控（≥0.7 高置信） |
+| `time_horizon` | intraday / next_day / weekly | 时效过滤 |
+| `rationale` | ≤80字 | 通知正文 |
+
+#### 第二层：三硬指标（订单/产能/毛利率）
+
+**核心判断**：卡脖子龙头必须有排产排满、产能扩张、毛利率稳中有升。
+
+| 字段 | 取值语义 |
+|------|----------|
+| `bottleneck_order_signal` | `none` / `mentioned`（侧面提及）/ **`strong`**（订单合同明确+大单/排产排满） |
+| `bottleneck_capacity_signal` | `none` / `expansion`（扩产在建）/ **`utilization_high`**（满产/扩产周期）/ `inventory_warning`（扩产过快库存积压） |
+| `bottleneck_margin_signal` | `unknown` / **`rising`**（卡脖子核心证据）/ `stable`（高位维持）/ `declining`（壁垒被破或价格战） |
+
+#### 第三层：卡脖子四柱 + 产业趋势
+
+**四柱**（is_kneck=true 时填 pillars）：
+
+| pillar | 中文 | 释义 |
+|--------|------|------|
+| `tech_moat` | 技术代差 | 几十年工艺积累，非砸钱短期能追上 |
+| `single_point` | 单点刚需 | 断供则下游整个行业停摆 |
+| `certification` | 3-5 年认证 | 极高门槛，几乎永久的生意 |
+| `long_cycle` | 长周期 | 替代难度大 |
+
+**产业趋势判断**：
+
+| 字段 | 含义 |
+|------|------|
+| `news_category` | policy / order / capacity / financial / patent / supply_disruption / general |
+| `narrative_themes` | 主题标签：`AI算力` / `CPO` / `人形机器人` / `半导体设备` / `国产替代` / `光通信` / `特种气体` / `磷化铟` / ... |
+| `trend_horizon_years` | 1-10：未来不可逆变化的窗口期 |
+| `industry_certainty` | `speculative`（投机）→ `emerging`（萌芽）→ `established`（确立）→ `dominant`（主导） |
+
+#### 通知门控（新增「瓶颈信号」）
+
+```python
+should_notify = (
+    analysis.is_high_confidence           # confidence ≥ 0.7 & non-neutral
+    or hits_holdings                       # 命中现有持仓
+    or analysis.is_bottleneck_signal       # 卡脖子/订单爆发/满产/毛利率上升
+)
+```
+
+`is_bottleneck_signal` 触发条件（任一）：
+- `is_kneck=True`
+- `bottleneck_order_signal == "strong"`
+- `bottleneck_capacity_signal in ("expansion", "utilization_high")`
+- `bottleneck_margin_signal == "rising"`
+
+#### Badge 聚合
+
+```python
+@property
+def badge(self) -> str:
+    parts = []
+    if self.is_kneck: parts.append("🔧卡脖子")
+    if self.bottleneck_order_signal == "strong": parts.append("📈订单爆发")
+    if self.bottleneck_margin_signal == "rising": parts.append("💹毛利率↑")
+    if self.bottleneck_capacity_signal == "utilization_high": parts.append("⚡满产")
+    return " ".join(parts)
+```
+
+例：`🔧卡脖子 📈订单爆发 ⚡满产`
+
+#### 实证样例
+
+输入：「中际旭创：800G光模块订单排至2027年，产能持续满产」
+
+```json
+{
+  "summary": "800G光模块订单排至2027年，产能满产毛利率高，AI算力驱动CPO技术路线加速",
+  "direction": "bullish", "confidence": 0.85,
+  "news_category": "order",
+  "is_kneck": true,
+  "scarcity_pillars": ["tech_moat", "single_point", "long_cycle"],
+  "bottleneck_order_signal": "strong",
+  "bottleneck_capacity_signal": "utilization_high",
+  "bottleneck_margin_signal": "stable",
+  "narrative_themes": ["AI算力", "CPO", "光通信", "国产替代"],
+  "industry_certainty": "emerging", "trend_horizon_years": 8
+}
+```
+
+LLM 准确识别：3 柱稀缺性 + 3 个瓶颈正信号 + 4 主题 + 8 年时间窗 + emerging 确定性。
+
+---
+
 ### 5.2 Ollama Cloud 模型接入
 
 **HTTP API**（Ollama 内置）：

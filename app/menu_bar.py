@@ -319,9 +319,22 @@ class StockMenuBarApp(rumps.App):
                 "direction": analysis.direction,
                 "direction_label": analysis.direction_label,
                 "emoji": analysis.emoji,
+                "category_emoji": analysis.category_emoji,
+                "badge": analysis.badge,
+                "is_kneck": analysis.is_kneck,
+                "kness_pillars": analysis.kness_pillars_label,
+                "scarcity_pillars": list(analysis.scarcity_pillars),
+                "narrative_themes": list(analysis.narrative_themes),
+                "industry_certainty": analysis.industry_certainty,
+                "trend_horizon_years": analysis.trend_horizon_years,
                 "confidence": analysis.confidence,
                 "sectors": list(analysis.sectors),
                 "stocks": list(analysis.stocks),
+                "news_category": analysis.news_category,
+                "bottleneck_order_signal": analysis.bottleneck_order_signal,
+                "bottleneck_capacity_signal": analysis.bottleneck_capacity_signal,
+                "bottleneck_margin_signal": analysis.bottleneck_margin_signal,
+                "rationale": analysis.rationale,
                 "related": list(related),
                 "hits_holdings": bool(hits_holdings),
                 "analyzed_at": analysis.analyzed_at,
@@ -354,11 +367,31 @@ class StockMenuBarApp(rumps.App):
         holdings_codes = {h.code for h in self._config.holdings}
         for entry in items[:10]:
             stars = "🔔" if entry["hits_holdings"] else ("⭐" if entry["confidence"] >= 0.85 else "·")
+            cat = entry.get("category_emoji", "📰")
+            badge = entry.get("badge", "")
+            badge_part = f" {badge}" if badge else ""
             ts = datetime.fromtimestamp(entry["analyzed_at"]).strftime("%H:%M")
             head = rumps.MenuItem(
-                f"{stars} {entry['emoji']} [{','.join(entry['sectors'][:2])}] {entry['summary'][:32]}"
+                f"{stars} {entry['emoji']} {cat} [{','.join(entry['sectors'][:2])}] {entry['summary'][:30]}{badge_part}"
             )
             head.add(rumps.MenuItem(f"方向: {entry['direction_label']}  置信度 {entry['confidence']:.2f}"))
+            if entry.get("news_category"):
+                head.add(rumps.MenuItem(f"类型: {entry['news_category']}"))
+            if entry.get("is_kneck") and entry.get("kness_pillars"):
+                head.add(rumps.MenuItem(f"🔧 卡脖子: {entry['kness_pillars']}"))
+            if entry.get("narrative_themes"):
+                head.add(rumps.MenuItem(f"主题: {', '.join(entry['narrative_themes'][:3])}"))
+            three = entry.get("bottleneck_order_signal", "none")
+            capacity = entry.get("bottleneck_capacity_signal", "none")
+            margin = entry.get("bottleneck_margin_signal", "unknown")
+            if three != "none" or capacity != "none" or margin != "unknown":
+                head.add(rumps.MenuItem(f"瓶颈: 订单={three}  产能={capacity}  毛利={margin}"))
+            if entry.get("industry_certainty") and entry.get("industry_certainty") != "speculative":
+                head.add(rumps.MenuItem(
+                    f"趋势: {entry['industry_certainty']} / {entry.get('trend_horizon_years', 1)}年"
+                ))
+            if entry.get("rationale"):
+                head.add(rumps.MenuItem(f"理由: {entry['rationale'][:60]}"))
             if entry["hits_holdings"]:
                 hit_codes = [c for c in entry["related"] if c in holdings_codes]
                 head.add(rumps.MenuItem(f"🔔 命中持仓: {','.join(hit_codes)}"))

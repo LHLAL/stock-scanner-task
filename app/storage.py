@@ -57,6 +57,20 @@ class PriceDB:
                     notified INTEGER DEFAULT 0
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS news_analysis_enhanced (
+                    news_hash TEXT PRIMARY KEY,
+                    news_category TEXT,
+                    bottleneck_order_signal TEXT,
+                    bottleneck_capacity_signal TEXT,
+                    bottleneck_margin_signal TEXT,
+                    is_kneck INTEGER,
+                    scarcity_pillars TEXT,
+                    trend_horizon_years INTEGER,
+                    industry_certainty TEXT,
+                    narrative_themes TEXT
+                )
+            """)
             conn.commit()
             conn.close()
 
@@ -68,6 +82,11 @@ class PriceDB:
         }
         if cols and "last_seen" not in cols:
             conn.execute("DROP TABLE news_cache")
+
+    @staticmethod
+    def _migrate_news_analysis_enhanced(conn: sqlite3.Connection) -> None:
+        """No-op for fresh schema; placeholder for future migrations."""
+        return
 
     def save_quotes(self, quotes: List[StockQuote]) -> None:
         """Save current quotes to history."""
@@ -167,6 +186,25 @@ class PriceDB:
                 ),
             )
             conn.execute(
+                "INSERT OR REPLACE INTO news_analysis_enhanced "
+                "(news_hash, news_category, bottleneck_order_signal, bottleneck_capacity_signal, "
+                "bottleneck_margin_signal, is_kneck, scarcity_pillars, trend_horizon_years, "
+                "industry_certainty, narrative_themes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    analysis_dict["news_hash"],
+                    analysis_dict.get("news_category", "general"),
+                    analysis_dict.get("bottleneck_order_signal", "none"),
+                    analysis_dict.get("bottleneck_capacity_signal", "none"),
+                    analysis_dict.get("bottleneck_margin_signal", "unknown"),
+                    1 if analysis_dict.get("is_kneck", False) else 0,
+                    json.dumps(analysis_dict.get("scarcity_pillars", []), ensure_ascii=False),
+                    int(analysis_dict.get("trend_horizon_years", 1)),
+                    analysis_dict.get("industry_certainty", "speculative"),
+                    json.dumps(analysis_dict.get("narrative_themes", []), ensure_ascii=False),
+                ),
+            )
+            conn.execute(
                 "UPDATE news_cache SET analyzed = 1 WHERE hash = ?",
                 (analysis_dict["news_hash"],),
             )
@@ -179,24 +217,53 @@ class PriceDB:
         cutoff = time.time() - ttl_hours * 3600
         with self._lock:
             conn = sqlite3.connect(self._db_path)
-            row = conn.execute(
+            base = conn.execute(
                 "SELECT summary, sectors, stocks, direction, confidence, time_horizon, rationale, analyzed_at "
                 "FROM news_analysis WHERE news_hash = ? AND analyzed_at >= ?",
                 (news_hash, cutoff),
             ).fetchone()
+            enh = conn.execute(
+                "SELECT news_category, bottleneck_order_signal, bottleneck_capacity_signal, "
+                "bottleneck_margin_signal, is_kneck, scarcity_pillars, trend_horizon_years, "
+                "industry_certainty, narrative_themes "
+                "FROM news_analysis_enhanced WHERE news_hash = ?",
+                (news_hash,),
+            ).fetchone()
             conn.close()
-        if not row:
+        if not base:
             return None
-        return {
+        result = {
             "news_hash": news_hash,
-            "summary": row[0] or "",
-            "sectors": json.loads(row[1]) if row[1] else [],
-            "stocks": json.loads(row[2]) if row[2] else [],
-            "direction": row[3] or "neutral",
-            "confidence": float(row[4] or 0.0),
-            "time_horizon": row[5] or "intraday",
-            "rationale": row[6] or "",
+            "summary": base[0] or "",
+            "sectors": json.loads(base[1]) if base[1] else [],
+            "stocks": json.loads(base[2]) if base[2] else [],
+            "direction": base[3] or "neutral",
+            "confidence": float(base[4] or 0.0),
+            "time_horizon": base[5] or "intraday",
+            "rationale": base[6] or "",
+            "news_category": "general",
+            "bottleneck_order_signal": "none",
+            "bottleneck_capacity_signal": "none",
+            "bottleneck_margin_signal": "unknown",
+            "is_kneck": False,
+            "scarcity_pillars": [],
+            "trend_horizon_years": 1,
+            "industry_certainty": "speculative",
+            "narrative_themes": [],
         }
+        if enh:
+            result.update({
+                "news_category": enh[0] or "general",
+                "bottleneck_order_signal": enh[1] or "none",
+                "bottleneck_capacity_signal": enh[2] or "none",
+                "bottleneck_margin_signal": enh[3] or "unknown",
+                "is_kneck": bool(enh[4]),
+                "scarcity_pillars": json.loads(enh[5]) if enh[5] else [],
+                "trend_horizon_years": int(enh[6] or 1),
+                "industry_certainty": enh[7] or "speculative",
+                "narrative_themes": json.loads(enh[8]) if enh[8] else [],
+            })
+        return result
 
     def news_mark_notified(self, news_hash: str) -> None:
         with self._lock:
@@ -218,10 +285,16 @@ class PriceDB:
                 "FROM news_analysis ORDER BY analyzed_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
+            enh_rows = conn.execute(
+                "SELECT news_hash, news_category, bottleneck_order_signal, bottleneck_capacity_signal, "
+                "bottleneck_margin_signal, is_kneck, scarcity_pillars, trend_horizon_years, "
+                "industry_certainty, narrative_themes FROM news_analysis_enhanced"
+            ).fetchall()
             conn.close()
+        enh_map = {r[0]: r for r in enh_rows}
         result: List[dict] = []
         for row in rows:
-            result.append({
+            base = {
                 "news_hash": row[0],
                 "summary": row[1] or "",
                 "sectors": json.loads(row[2]) if row[2] else [],
@@ -230,5 +303,28 @@ class PriceDB:
                 "confidence": float(row[5] or 0.0),
                 "time_horizon": row[6] or "intraday",
                 "rationale": row[7] or "",
-            })
+                "news_category": "general",
+                "bottleneck_order_signal": "none",
+                "bottleneck_capacity_signal": "none",
+                "bottleneck_margin_signal": "unknown",
+                "is_kneck": False,
+                "scarcity_pillars": [],
+                "trend_horizon_years": 1,
+                "industry_certainty": "speculative",
+                "narrative_themes": [],
+            }
+            enh = enh_map.get(row[0])
+            if enh:
+                base.update({
+                    "news_category": enh[1] or "general",
+                    "bottleneck_order_signal": enh[2] or "none",
+                    "bottleneck_capacity_signal": enh[3] or "none",
+                    "bottleneck_margin_signal": enh[4] or "unknown",
+                    "is_kneck": bool(enh[5]),
+                    "scarcity_pillars": json.loads(enh[6]) if enh[6] else [],
+                    "trend_horizon_years": int(enh[7] or 1),
+                    "industry_certainty": enh[8] or "speculative",
+                    "narrative_themes": json.loads(enh[9]) if enh[9] else [],
+                })
+            result.append(base)
         return result
