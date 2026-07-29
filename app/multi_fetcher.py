@@ -6,23 +6,33 @@
 """
 
 import logging
-import random
 import re
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Protocol
 
 import requests
 
-from app.fetcher import StockQuote  # reuse existing dataclass
-
 logger = logging.getLogger(__name__)
 
-# 动态检测 mootdx 是否可用
+
+@dataclass
+class StockQuote:
+    """行情数据快照。"""
+
+    code: str
+    name: str
+    current_price: float
+    yesterday_close: float
+    change_pct: float
+    change_amount: float
+    volume: float = 0.0
+
+# 动态检测 mootdx 是否可用（mootdx 0.11+ 改用 Quotes().factory()，但模块本身存在即视为可用）
 HAS_MOOTDX = False
 try:
-    from mootdx import TDX
+    import mootdx
     HAS_MOOTDX = True
 except ImportError:
     logger.info("mootdx not installed, TDXSource disabled")
@@ -136,153 +146,89 @@ class TencentSource:
 
 
 # ---------------------------------------------------------------------------
-# SinaSource（新浪财经）
-# ---------------------------------------------------------------------------
-
-
-class SinaSource:
-    """新浪财经 API，数据格式：var hq_str_sh600519="名称,代码,现价,昨收,..."
-    响应编码：GBK
-    """
-
-    name = "Sina"
-
-    def __init__(self, api_template: str = "http://hq.sinajs.cn/list={codes}"):
-        self._api_template = api_template
-
-    def fetch(self, codes: List[str]) -> List[StockQuote]:
-        if not codes:
-            return []
-
-        codes_str = ",".join(codes)
-        url = self._api_template.format(codes=codes_str)
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        # 新浪使用 GBK 编码
-        text = response.content.decode("gbk")
-        return self._parse(text)
-
-    def health_check(self) -> bool:
-        try:
-            return len(self.fetch(["sh000001"])) > 0
-        except Exception:
-            return False
-
-    @staticmethod
-    def _parse(text: str) -> List[StockQuote]:
-        quotes: List[StockQuote] = []
-        if not text:
-            return quotes
-
-        for entry in text.strip().split("\n"):
-            entry = entry.strip()
-            if not entry:
-                continue
-
-            # 匹配 var hq_str_sh600519="..."
-            match = re.match(r'var hq_str_(sh\d+|sz\d+)="(.*)"', entry)
-            if not match:
-                continue
-
-            code = match.group(1)
-            fields = match.group(2).split(",")
-
-            # 字段顺序（新浪）：
-            # [0]名称 [1]代码 [2]今开 [3]昨收 [4]当前价 [5-9]买1-5价
-            # [10-14]卖1-5价 [15]现量 [16]成交量 [17]最高 [18]最低 [19]时间
-            if len(fields) < 5:
-                continue
-
-            try:
-                name = fields[0] if fields[0] else code
-                yesterday_close = float(fields[3]) if fields[3] else 0.0
-                current_price = float(fields[4]) if fields[4] else 0.0
-
-                change_amount = current_price - yesterday_close
-                change_pct = 0.0
-                if yesterday_close > 0:
-                    change_pct = (current_price - yesterday_close) / yesterday_close * 100
-
-                volume = 0.0
-                if len(fields) > 16 and fields[16]:
-                    try:
-                        volume = float(fields[16])
-                    except ValueError:
-                        pass
-
-                quotes.append(StockQuote(
-                    code=code,
-                    name=name,
-                    current_price=current_price,
-                    yesterday_close=yesterday_close,
-                    change_pct=round(change_pct, 2),
-                    change_amount=round(change_amount, 2),
-                    volume=volume,
-                ))
-            except (ValueError, IndexError) as e:
-                logger.warning(f"[SinaSource] parse error for {code}: {e}")
-                continue
-
-        return quotes
-
-
-# ---------------------------------------------------------------------------
-# TDXSource（通达信 / mootdx）
+# TDXSource（通达信 / mootdx 0.11+）
 # ---------------------------------------------------------------------------
 
 
 class TDXSource:
-    """通达信行情 API，通过 mootdx 连接（TCP 7709）。
-    mootdx 为可选依赖，未安装时 health_check 返回 False。
+    """通达信行情 API，通过 mootdx 0.11+ 连接（TCP 7709）。
+    mootdx 为可选依赖，未安装或初始化失败时 fetch 抛 ImportError 触发下一路切换。
+
+    注：mootdx 0.11+ API 改用 `mootdx.quotes.Quotes().factory()`；返回 DataFrame
+    字段 `last_close`（昨收，替代旧版的 `close`/`settlement`）；`name` 字段为 None，
+    需要调用方通过 `name_map` 提供中文名。
     """
 
     name = "TDX"
 
-    def __init__(self):
-        self._client: Optional["TDX"] = TDX() if HAS_MOOTDX else None
+    def __init__(self, name_map: Optional[Dict[str, str]] = None, timeout: int = 5):
+        self._name_map = name_map or {}
+        self._client: Optional["StdQuotes"] = None
+        if not HAS_MOOTDX:
+            return
+        from mootdx.quotes import Quotes
+        # mootdx 0.11+ 的默认 BESTIP.HQ 配置有 bug（空字符串而非空列表），
+        # 会导致 `ip, port = self.server` 抛 ValueError。先尝试默认 discovery，
+        # 失败则用下面的 fallback 服务器列表按顺序探测
+        fallback_servers = [
+            ("60.191.117.167", 7709),   # 上海电信
+            ("180.153.18.170", 7709),   # 上海电信
+            ("60.12.136.250", 7709),    # 杭州电信
+        ]
+        for server in [None] + fallback_servers:
+            try:
+                kwargs = {"market": "std", "timeout": timeout}
+                if server is not None:
+                    kwargs["server"] = server
+                client = Quotes().factory(**kwargs)
+                # 立即做一次轻量探活，避免 init 通过但实际连不通
+                client.quotes(["600519"])
+                self._client = client
+                if server is not None:
+                    logger.info(f"[TDXSource] connected via fallback server {server}")
+                return
+            except Exception as e:
+                logger.debug(f"[TDXSource] server {server} failed: {e}")
+                continue
+        logger.warning("[TDXSource] all servers failed, TDX disabled")
+        self._client = None
 
     def fetch(self, codes: List[str]) -> List[StockQuote]:
         if not HAS_MOOTDX or self._client is None:
-            raise ImportError("mootdx not installed")
-
-        # mootdx.quotes() 返回 pandas DataFrame
+            raise ImportError("mootdx not installed or TDX init failed")
         df = self._client.quotes(codes)
-        return self._parse_df(df, codes)
+        return self._parse_df(df)
 
     def health_check(self) -> bool:
-        if not HAS_MOOTDX:
+        if self._client is None:
             return False
         try:
-            return len(self.fetch(["000001"])) > 0
+            return len(self.fetch(["600519"])) > 0
         except Exception:
             return False
 
-    @staticmethod
-    def _parse_df(df, codes: List[str]) -> List[StockQuote]:
+    def _parse_df(self, df) -> List[StockQuote]:
         quotes: List[StockQuote] = []
         try:
             import pandas as pd
             if not isinstance(df, pd.DataFrame) or df.empty:
                 return quotes
 
-            # mootdx 返回列名可能为：code, name, open, close, high, low, price, volume...
-            # 统一转换为小写处理
-            df.columns = [c.lower() for c in df.columns]
-
             for _, row in df.iterrows():
                 code = str(row.get("code", "")).strip()
                 if not code:
                     continue
 
-                # 确保带前缀
+                # mootdx 0.11+ 返回纯数字代码 + market 列（1=SH, 0=SZ），
+                # 直接用 market 加前缀；不靠首位数字猜（对指数会错）
                 if not (code.startswith("sh") or code.startswith("sz")):
-                    code = f"sz{code}" if code.startswith("0") or code.startswith("3") else f"sh{code}"
+                    market = row.get("market", 1)
+                    prefix = "sh" if int(market) == 1 else "sz"
+                    code = f"{prefix}{code}"
 
                 try:
                     current_price = float(row.get("price", 0) or 0)
-                    yesterday_close = float(row.get("close", 0) or 0)
-                    if yesterday_close == 0:
-                        yesterday_close = float(row.get("settlement", 0) or 0)
+                    yesterday_close = float(row.get("last_close", 0) or 0)
 
                     change_amount = current_price - yesterday_close
                     change_pct = 0.0
@@ -290,7 +236,8 @@ class TDXSource:
                         change_pct = (current_price - yesterday_close) / yesterday_close * 100
 
                     volume = float(row.get("vol", 0) or 0)
-                    name = str(row.get("name", code))
+                    # mootdx 0.11+ 不返回 name，从调用方传入的 name_map 取（找不到则用 code 占位）
+                    name = self._name_map.get(code, code)
 
                     quotes.append(StockQuote(
                         code=code,

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from app.config import HoldingConfig
-from app.fetcher import StockQuote
+from app.multi_fetcher import StockQuote
 from app.storage import PriceDB
 
 logger = logging.getLogger(__name__)
@@ -328,10 +328,6 @@ class PriceMonitor:
 
     @property
     def total_pnl(self) -> float:
-        return 0.0
-
-    @property
-    def total_pnl_pct(self) -> float:
         return 0.0
 
     def get_history(self, code: str) -> List[StockQuote]:
