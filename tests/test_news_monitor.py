@@ -31,9 +31,11 @@ def _make_news_config(**overrides):
                      poll_interval_seconds=30,
                      off_hours_poll_interval_seconds=300),
         filter=NewsFilterConfig(
-            keyword_threshold=0.3,
-            min_confidence_for_notify=0.7,
-            min_confidence_for_holdings_alert=0.5,
+            keyword_threshold=0.5,
+            min_confidence_for_notify=0.8,
+            min_confidence_for_holdings_alert=0.65,
+            bottleneck_confidence_floor=0.65,
+            max_notifications_per_day=20,
         ),
         llm=LlmConfig(model="test:model", host="http://localhost:11434",
                       api_key=None, max_per_minute=10,
@@ -180,15 +182,33 @@ class TestNewsMonitorTick:
         conn.close()
         assert flag == 0
 
-    def test_notifies_when_holdings_hit_with_low_confidence(self, setup_monitor, temp_db_path):
-        # threshold min_confidence_for_holdings_alert = 0.5
+    def test_holdings_hit_with_low_confidence_does_not_notify(self, setup_monitor, temp_db_path):
+        # threshold min_confidence_for_holdings_alert = 0.65; 0.55 should NOT notify
         news = _make_news(hash="hit-test")
         setup_monitor._fetcher.fetch.return_value = [news]
         setup_monitor._analyzer.analyze.return_value = _make_analysis(
             hash="hit-test", confidence=0.55, direction="bullish"
         )
-        setup_monitor._sector_mapper.map_analysis.return_value = ["sh601398"]  # in holdings
+        setup_monitor._sector_mapper.map_analysis.return_value = ["sh601398"]
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
 
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        flag = conn.execute(
+            "SELECT notified FROM news_analysis WHERE news_hash = ?", ("hit-test",)
+        ).fetchone()[0]
+        conn.close()
+        assert flag == 0
+
+    def test_holdings_hit_with_high_confidence_notifies(self, setup_monitor, temp_db_path):
+        # holdings_alert = 0.65; 0.70 should pass
+        news = _make_news(hash="hit-test")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = _make_analysis(
+            hash="hit-test", confidence=0.70, direction="bullish"
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = ["sh601398"]
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
 
@@ -241,13 +261,11 @@ class TestNewsMonitorStartStop:
         assert setup_monitor._running is False
 
 class TestBottleneckNotify:
-    def test_notifies_when_is_kneck_no_high_confidence(self, setup_monitor, temp_db_path):
+    def test_kneck_with_low_confidence_does_not_notify(self, setup_monitor, temp_db_path):
+        # bottleneck_confidence_floor = 0.65; 0.6 should NOT notify
         news = _make_news(hash="kneck-test")
         setup_monitor._fetcher.fetch.return_value = [news]
-        # Confidence below 0.7 but is_kneck=True → should still notify
-        setup_monitor._analyzer.analyze.return_value = _make_analysis(
-            hash="kneck-test", confidence=0.6, direction="bullish",
-        )._replace(is_kneck=True) if False else NewsAnalysis(
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
             news_hash="kneck-test", summary="卡脖子", direction="bullish",
             confidence=0.6, is_kneck=True, scarcity_pillars=["tech_moat"],
         )
@@ -261,9 +279,50 @@ class TestBottleneckNotify:
             "SELECT notified FROM news_analysis WHERE news_hash = ?", ("kneck-test",)
         ).fetchone()[0]
         conn.close()
+        assert flag == 0
+
+    def test_kneck_with_high_confidence_notifies(self, setup_monitor, temp_db_path):
+        # bottleneck floor 0.65 + 0.85 conf + bullish → notify
+        news = _make_news(hash="kneck-test")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="kneck-test", summary="卡脖子突破", direction="bullish",
+            confidence=0.85, is_kneck=True, scarcity_pillars=["tech_moat"],
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        flag = conn.execute(
+            "SELECT notified FROM news_analysis WHERE news_hash = ?", ("kneck-test",)
+        ).fetchone()[0]
+        conn.close()
         assert flag == 1
 
-    def test_notifies_when_strong_order(self, setup_monitor, temp_db_path):
+    def test_kneck_neutral_direction_does_not_notify(self, setup_monitor, temp_db_path):
+        # 即使 is_kneck=true 且高置信，direction=neutral 仍不通知
+        news = _make_news(hash="neutral-kneck")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="neutral-kneck", summary="中性卡脖子", direction="neutral",
+            confidence=0.9, is_kneck=True,
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        flag = conn.execute(
+            "SELECT notified FROM news_analysis WHERE news_hash = ?", ("neutral-kneck",)
+        ).fetchone()[0]
+        conn.close()
+        assert flag == 0
+
+    def test_strong_order_with_low_confidence_does_not_notify(self, setup_monitor, temp_db_path):
+        # 订单爆发 + 低置信 0.5 < 0.65 floor → 不通知
         news = _make_news(hash="order-test")
         setup_monitor._fetcher.fetch.return_value = [news]
         setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
@@ -280,7 +339,7 @@ class TestBottleneckNotify:
             "SELECT notified FROM news_analysis WHERE news_hash = ?", ("order-test",)
         ).fetchone()[0]
         conn.close()
-        assert flag == 1
+        assert flag == 0
 
     def test_does_not_notify_neutral_no_signals(self, setup_monitor, temp_db_path):
         news = _make_news(hash="boring-test")
@@ -371,3 +430,106 @@ class TestDailyLimit:
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
         assert setup_monitor._daily_count == 1
+
+
+class TestTieredNotificationGating:
+    """Three-tier notification gating logic (TIER1/TIER2/TIER3)."""
+
+    def test_tier1_passes_with_high_confidence(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.85),
+            hits_holdings=False,
+        ) is True
+
+    def test_tier1_blocked_neutral(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="neutral", confidence=0.95),
+            hits_holdings=False,
+        ) is False
+
+    def test_tier1_blocked_low_confidence(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.7),
+            hits_holdings=False,
+        ) is False
+
+    def test_tier2_passes_holdings_with_sufficient_confidence(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.7),
+            hits_holdings=True,
+        ) is True
+
+    def test_tier2_blocked_holdings_with_low_confidence(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.6),
+            hits_holdings=True,
+        ) is False
+
+    def test_tier3_passes_bottleneck_with_sufficient_confidence(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish",
+                        confidence=0.7, is_kneck=True),
+            hits_holdings=False,
+        ) is True
+
+    def test_tier3_blocked_bottleneck_low_confidence(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish",
+                        confidence=0.6, is_kneck=True),
+            hits_holdings=False,
+        ) is False
+
+    def test_tier3_blocked_bottleneck_neutral(self, setup_monitor):
+        # 即使 is_kneck=true 且高置信，direction=neutral 仍不通知
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="neutral",
+                        confidence=0.95, is_kneck=True),
+            hits_holdings=False,
+        ) is False
+
+    def test_no_signals_no_notify(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.4),
+            hits_holdings=False,
+        ) is False
+
+
+class TestNotificationDailyCap:
+    """_notif_count + max_notifications_per_day enforcement."""
+
+    def test_daily_cap_default_is_20(self, setup_monitor):
+        assert setup_monitor._config.filter.max_notifications_per_day == 20
+
+    def test_notif_count_starts_zero(self, setup_monitor):
+        assert setup_monitor._notif_count == 0
+
+    def test_notif_skipped_at_cap(self, setup_monitor, temp_db_path):
+        setup_monitor._notif_count = setup_monitor._config.filter.max_notifications_per_day
+        # Try to trigger another notification
+        news = _make_news(hash="cap-test")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="cap-test", summary="应该被挡", direction="bullish", confidence=0.95
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+
+        # Should still be marked notified=False because _notify was skipped
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        flag = conn.execute(
+            "SELECT notified FROM news_analysis WHERE news_hash = ?", ("cap-test",)
+        ).fetchone()[0]
+        conn.close()
+        assert flag == 0
+        # But the analysis IS in DB
+        row = conn.execute(
+            "SELECT COUNT(*) FROM news_analysis WHERE news_hash = ?", ("cap-test",)
+        ).fetchone()[0] if False else 0
+        conn = sqlite3.connect(temp_db_path)
+        row = conn.execute(
+            "SELECT COUNT(*) FROM news_analysis WHERE news_hash = ?", ("cap-test",)
+        ).fetchone()[0]
+        conn.close()
+        assert row == 1  # analysis saved

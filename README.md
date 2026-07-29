@@ -218,7 +218,7 @@ echo 'export OLLAMA_API_KEY=your_key_here' >> ~/.zshrc
   "news": {
     "enabled": true,
     "cls": {"sign": null, "cookie": null, "poll_interval_seconds": 20, "off_hours_poll_interval_seconds": 600},
-    "filter": {"keyword_threshold": 0.5, "min_confidence_for_notify": 0.7, "min_confidence_for_holdings_alert": 0.5},
+    "filter": {"keyword_threshold": 0.5, "min_confidence_for_notify": 0.8, "min_confidence_for_holdings_alert": 0.65, "bottleneck_confidence_floor": 0.65, "max_notifications_per_day": 20},
     "llm": {"model": "minimax-m2.5:cloud", "host": "http://localhost:11434", "api_key": null,
             "max_per_minute": 12, "cache_ttl_hours": 24, "request_timeout_seconds": 30, "daily_limit": 1000},
     "sector": {"cache_ttl_days": 7, "force_refresh": false}
@@ -232,7 +232,12 @@ echo 'export OLLAMA_API_KEY=your_key_here' >> ~/.zshrc
 - **关键词预筛**（阈值 0.5）：约 160 词覆盖**卡脖子投资哲学**（订单/产能/满产/CPO/HBM/磷化铟/人形机器人/光刻机 等主题词）+ 政策/财报/订单信号；同时 26 词**黑名单**（美股/港股/美光/英伟达/美玉米 等海外噪声）降权
 - **LLM 分析**（按"卡脖子供应链瓶颈理论"）：本地 Ollama 调用 `minimax-m2.5:cloud`，强制 JSON 输出，包含 5 维核心 + 瓶颈 9 维增强
 - **板块匹配**：LLM 输出 sectors 通过 fuzzy match 映射到 `docs/sector_dict.json`（约 70 板块 / 230 只代表股）
-- **通知触发**：`confidence ≥ 0.7` 或命中现有持仓（阈值 0.5）或**卡脖子信号**（is_kneck / 订单爆发 / 满产 / 毛利率上升）
+- **通知触发（三层门控，避免噪音）**：
+  - **Tier 1**: `confidence ≥ 0.8` 且非中性
+  - **Tier 2**: 命中持仓 + `confidence ≥ 0.65` 且非中性
+  - **Tier 3**: 卡脖子信号 + `confidence ≥ 0.65` 且非中性
+  - **日上限**: 默认 20 次/天，超限只入库不弹通知
+  - **方向强制**: `direction == neutral` 一律不通知
 - **缓存**：news_cache 表去重 + 24h LLM 结果缓存
 
 ### LLM 分析维度

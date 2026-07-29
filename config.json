@@ -28,8 +28,10 @@
     },
     "filter": {
       "keyword_threshold": 0.5,
-      "min_confidence_for_notify": 0.7,
-      "min_confidence_for_holdings_alert": 0.5
+      "min_confidence_for_notify": 0.8,
+      "min_confidence_for_holdings_alert": 0.65,
+      "bottleneck_confidence_floor": 0.65,
+      "max_notifications_per_day": 20
     },
     "llm": {
       "model": "minimax-m2.5:cloud",

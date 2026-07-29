@@ -54,6 +54,9 @@ class NewsMonitor:
         self._daily_count_date: date = date.today()
         self._daily_limit_warned: bool = False
 
+        self._notif_count: int = 0
+        self._notif_count_date: date = date.today()
+
     def health_check(self) -> dict:
         """Return status of each component."""
         cls_ok = True
@@ -184,9 +187,10 @@ class NewsMonitor:
             }
             self._db.news_save_analysis(analysis_dict)
 
-            if analysis.is_high_confidence or hits_holdings or analysis.is_bottleneck_signal:
-                self._notify(analysis, related, hits_holdings)
-                self._db.news_mark_notified(analysis.news_hash)
+            if self._should_notify(analysis, hits_holdings):
+                if self._notify(analysis, related, hits_holdings):
+                    self._db.news_mark_notified(analysis.news_hash)
+                    self._notif_count += 1
 
             new_count += 1
             if self._on_update:
@@ -198,8 +202,50 @@ class NewsMonitor:
         if new_count:
             logger.info(f"[NewsMonitor] processed {new_count} new analyses")
 
-    def _notify(self, analysis: NewsAnalysis, related: List[str], hits_holdings: bool) -> None:
-        """Emit a macOS notification for high-confidence or holdings-relevant news."""
+    def _should_notify(self, analysis: NewsAnalysis, hits_holdings: bool) -> bool:
+        """Three-tier notification gating.
+
+        Tier 1 (CRITICAL):    high confidence (≥ notify) AND non-neutral
+        Tier 2 (HOLDINGS):    confidence ≥ holdings_alert AND non-neutral AND hits holdings
+        Tier 3 (BOTTLENECK):  is_bottleneck_signal AND confidence ≥ floor AND non-neutral
+
+        Plus: daily notification cap (max_notifications_per_day).
+        """
+        cfg = self._config.filter
+        non_neutral = analysis.direction in ("bullish", "bearish")
+
+        if not non_neutral:
+            return False
+
+        if analysis.confidence >= cfg.min_confidence_for_notify:
+            logger.debug(f"[NewsMonitor] notify TIER1 (high conf {analysis.confidence:.2f})")
+            return True
+
+        if (hits_holdings
+                and analysis.confidence >= cfg.min_confidence_for_holdings_alert):
+            logger.debug(
+                f"[NewsMonitor] notify TIER2 (holdings hit, conf {analysis.confidence:.2f})"
+            )
+            return True
+
+        if (analysis.is_bottleneck_signal
+                and analysis.confidence >= cfg.bottleneck_confidence_floor):
+            logger.debug(
+                f"[NewsMonitor] notify TIER3 (bottleneck, conf {analysis.confidence:.2f})"
+            )
+            return True
+
+        return False
+
+    def _notify(self, analysis: NewsAnalysis, related: List[str], hits_holdings: bool) -> bool:
+        """Emit macOS notification; returns True if sent, False if capped."""
+        if self._notif_count >= self._config.filter.max_notifications_per_day:
+            logger.debug(
+                f"[NewsMonitor] daily notif cap reached (%d), skipping notification",
+                self._notif_count,
+            )
+            return False
+
         badge = analysis.badge
         title = f"{analysis.category_emoji} {analysis.summary[:40]}"
         subtitle = f"{analysis.direction_label}  置信度 {analysis.confidence:.2f}"
@@ -218,5 +264,7 @@ class NewsMonitor:
             message += f"\n相关: {', '.join(related[:5])}"
         try:
             rumps.notification(title=title, subtitle=subtitle, message=message)
+            return True
         except Exception as e:
             logger.debug(f"[NewsMonitor] notification failed: {e}")
+            return False

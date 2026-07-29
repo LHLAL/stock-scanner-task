@@ -24,8 +24,10 @@ class ClsConfig:
 @dataclass
 class NewsFilterConfig:
     keyword_threshold: float = 0.5
-    min_confidence_for_notify: float = 0.7
-    min_confidence_for_holdings_alert: float = 0.5
+    min_confidence_for_notify: float = 0.8
+    min_confidence_for_holdings_alert: float = 0.65
+    bottleneck_confidence_floor: float = 0.65
+    max_notifications_per_day: int = 20
 
 
 @dataclass
@@ -173,8 +175,10 @@ def load_config(path: Optional[str] = None) -> AppConfig:
             ),
             filter=NewsFilterConfig(
                 keyword_threshold=data.get("news", {}).get("filter", {}).get("keyword_threshold", 0.5),
-                min_confidence_for_notify=data.get("news", {}).get("filter", {}).get("min_confidence_for_notify", 0.7),
-                min_confidence_for_holdings_alert=data.get("news", {}).get("filter", {}).get("min_confidence_for_holdings_alert", 0.5),
+                min_confidence_for_notify=data.get("news", {}).get("filter", {}).get("min_confidence_for_notify", 0.8),
+                min_confidence_for_holdings_alert=data.get("news", {}).get("filter", {}).get("min_confidence_for_holdings_alert", 0.65),
+                bottleneck_confidence_floor=data.get("news", {}).get("filter", {}).get("bottleneck_confidence_floor", 0.65),
+                max_notifications_per_day=data.get("news", {}).get("filter", {}).get("max_notifications_per_day", 20),
             ),
             llm=LlmConfig(
                 model=data.get("news", {}).get("llm", {}).get("model", "minimax-m2.5:cloud"),
