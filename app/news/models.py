@@ -36,7 +36,7 @@ class NewsAnalysis:
     analyzed_at: float = field(default_factory=time.time)
 
     @classmethod
-    def from_json(cls, news_hash: str, raw: str) -> "NewsAnalysis":
+    def from_json(cls, news_hash: str, raw: "str | dict") -> "NewsAnalysis":
         """Parse Ollama JSON response into NewsAnalysis (lenient)."""
         import json
         data = json.loads(raw) if isinstance(raw, str) else raw
