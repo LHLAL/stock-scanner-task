@@ -19,7 +19,9 @@ class TestNewsAnalysisFromJson:
     def test_full_valid(self):
         raw = (
             '{"summary": "央行降准 0.5%", "sectors": ["银行", "地产"], '
-            '"stocks": ["sh601398"], "direction": "bullish", '
+            '"stocks": [{"code": "sh601398", "name": "工商银行"}, '
+            '{"code": "sh600000", "name": "浦发银行"}], '
+            '"direction": "bullish", '
             '"confidence": 0.85, "time_horizon": "next_day", '
             '"rationale": "释放流动性"}'
         )
@@ -27,7 +29,11 @@ class TestNewsAnalysisFromJson:
         assert a.news_hash == "abc"
         assert a.summary == "央行降准 0.5%"
         assert a.sectors == ["银行", "地产"]
-        assert a.stocks == ["sh601398"]
+        assert len(a.stocks) == 2
+        assert a.stocks[0].code == "sh601398"
+        assert a.stocks[0].name == "工商银行"
+        assert a.stocks[1].code == "sh600000"
+        assert a.stocks[1].name == "浦发银行"
         assert a.direction == "bullish"
         assert a.confidence == 0.85
         assert a.time_horizon == "next_day"
@@ -267,3 +273,79 @@ class TestBottleneckProperties:
         assert NewsAnalysis(news_hash="h", summary="", news_category="order").category_emoji == "📦"
         assert NewsAnalysis(news_hash="h", summary="", news_category="general").category_emoji == "📰"
         assert NewsAnalysis(news_hash="h", summary="", news_category="unknown").category_emoji == "📰"
+
+
+class TestStockDataclass:
+    def test_display_with_name_and_code(self):
+        from app.news.models import Stock
+        s = Stock(code="sh601398", name="工商银行")
+        assert s.display() == "工商银行(sh601398)"
+
+    def test_display_name_only(self):
+        from app.news.models import Stock
+        s = Stock(code="", name="贵州茅台")
+        assert s.display() == "贵州茅台"
+
+    def test_display_code_only(self):
+        from app.news.models import Stock
+        s = Stock(code="sh600519", name="")
+        assert s.display() == "sh600519"
+
+    def test_label_prefers_name(self):
+        from app.news.models import Stock
+        assert Stock(code="sh601398", name="工商银行").label() == "工商银行"
+        assert Stock(code="sh601398", name="").label() == "sh601398"
+
+
+class TestParseStocks:
+    def test_parse_new_format(self):
+        from app.news.models import _parse_stocks
+        result = _parse_stocks([
+            {"code": "sh601398", "name": "工商银行"},
+            {"code": "sh600519", "name": "贵州茅台"},
+        ])
+        assert len(result) == 2
+        assert result[0].code == "sh601398"
+        assert result[0].name == "工商银行"
+
+    def test_parse_legacy_list_of_strings(self):
+        from app.news.models import _parse_stocks
+        result = _parse_stocks(["sh601398", "sh600519"])
+        assert len(result) == 2
+        assert result[0].code == "sh601398"
+        assert result[0].name == ""
+
+    def test_parse_mixed_format(self):
+        from app.news.models import _parse_stocks
+        result = _parse_stocks([
+            {"code": "sh601398", "name": "工商银行"},
+            "sh600519",
+        ])
+        assert len(result) == 2
+        assert result[0].name == "工商银行"
+        assert result[1].code == "sh600519"
+        assert result[1].name == ""
+
+    def test_parse_empty(self):
+        from app.news.models import _parse_stocks
+        assert _parse_stocks([]) == []
+        assert _parse_stocks(None) == []
+
+    def test_parse_caps_at_10(self):
+        from app.news.models import _parse_stocks
+        codes = [{"code": f"sh{str(i).zfill(6)}", "name": f"S{i}"} for i in range(15)]
+        assert len(_parse_stocks(codes)) == 10
+
+    def test_from_json_legacy_strings(self):
+        a = NewsAnalysis.from_json("h", {"stocks": ["sh601398"]})
+        assert len(a.stocks) == 1
+        assert a.stocks[0].code == "sh601398"
+        assert a.stocks[0].name == ""
+
+    def test_stock_codes_property(self):
+        from app.news.models import Stock
+        a = NewsAnalysis(news_hash="h", summary="", stocks=[
+            Stock(code="sh601398", name="工商银行"),
+            Stock(code="sh600519", name="贵州茅台"),
+        ])
+        assert a.stock_codes == ["sh601398", "sh600519"]

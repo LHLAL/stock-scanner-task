@@ -91,7 +91,10 @@ NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请
 {{
   "summary": "<一句话总结，≤30字>",
   "sectors": ["<行业板块大类>"],
-  "stocks": ["<股票名或代码>"],
+  "stocks": [
+    {{"code": "sh601398", "name": "工商银行"}},
+    {{"code": "sh600519", "name": "贵州茅台"}}
+  ],
   "direction": "<bullish | bearish | neutral>",
   "confidence": <0.0-1.0>,
   "time_horizon": "<intraday | next_day | weekly>",

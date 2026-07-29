@@ -1,4 +1,5 @@
 """SQLite storage for price history data."""
+import json
 import logging
 import sqlite3
 import threading
@@ -6,6 +7,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from app.multi_fetcher import StockQuote
+from app.news.models import _parse_stocks
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +166,13 @@ class PriceDB:
             return False
 
     def news_save_analysis(self, analysis_dict: dict) -> None:
-        """Persist a NewsAnalysis (dict form) for caching/dedup."""
-        import json
+        """Persist a NewsAnalysis (dict form) for caching/dedup.
+
+        stocks in analysis_dict can be List[str] (legacy) or List[{code, name}].
+        """
+
+        from app.news.models import _parse_stocks
+        stocks = _parse_stocks(analysis_dict.get("stocks", []))
         now = time.time()
         with self._lock:
             conn = sqlite3.connect(self._db_path)
@@ -177,7 +184,10 @@ class PriceDB:
                     analysis_dict["news_hash"],
                     analysis_dict.get("summary", ""),
                     json.dumps(analysis_dict.get("sectors", []), ensure_ascii=False),
-                    json.dumps(analysis_dict.get("stocks", []), ensure_ascii=False),
+                    json.dumps(
+                        [{"code": s.code, "name": s.name} for s in stocks],
+                        ensure_ascii=False,
+                    ),
                     analysis_dict.get("direction", "neutral"),
                     float(analysis_dict.get("confidence", 0.0)),
                     analysis_dict.get("time_horizon", "intraday"),
@@ -213,7 +223,7 @@ class PriceDB:
 
     def news_get_analysis(self, news_hash: str, ttl_hours: int = 24) -> Optional[dict]:
         """Fetch cached analysis if still fresh."""
-        import json
+
         cutoff = time.time() - ttl_hours * 3600
         with self._lock:
             conn = sqlite3.connect(self._db_path)
@@ -236,7 +246,7 @@ class PriceDB:
             "news_hash": news_hash,
             "summary": base[0] or "",
             "sectors": json.loads(base[1]) if base[1] else [],
-            "stocks": json.loads(base[2]) if base[2] else [],
+            "stocks": _parse_stocks(json.loads(base[2])) if base[2] else [],
             "direction": base[3] or "neutral",
             "confidence": float(base[4] or 0.0),
             "time_horizon": base[5] or "intraday",
@@ -277,7 +287,7 @@ class PriceDB:
 
     def news_get_recent_analyses(self, limit: int = 20) -> List[dict]:
         """返回最近的分析结果（按 analyzed_at 倒序）."""
-        import json
+
         with self._lock:
             conn = sqlite3.connect(self._db_path)
             rows = conn.execute(
@@ -298,7 +308,7 @@ class PriceDB:
                 "news_hash": row[0],
                 "summary": row[1] or "",
                 "sectors": json.loads(row[2]) if row[2] else [],
-                "stocks": json.loads(row[3]) if row[3] else [],
+                "stocks": _parse_stocks(json.loads(row[3])) if row[3] else [],
                 "direction": row[4] or "neutral",
                 "confidence": float(row[5] or 0.0),
                 "time_horizon": row[6] or "intraday",

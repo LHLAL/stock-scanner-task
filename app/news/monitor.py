@@ -176,7 +176,8 @@ class NewsMonitor:
                 "news_hash": analysis.news_hash,
                 "summary": analysis.summary,
                 "sectors": analysis.sectors,
-                "stocks": analysis.stocks,
+                "stocks": [s.code for s in analysis.stocks],
+                "stock_names": [s.name for s in analysis.stocks],
                 "direction": analysis.direction,
                 "confidence": analysis.confidence,
                 "time_horizon": analysis.time_horizon,
@@ -271,9 +272,18 @@ class NewsMonitor:
         if analysis.industry_certainty != "speculative":
             message += f"\n确定性: {analysis.industry_certainty}  时长: {analysis.trend_horizon_years}年"
         if hits_holdings:
-            message += f"\n\n🔔 命中持仓: {', '.join(sorted(set(related) & self._holdings))}"
+            hit_codes = sorted(set(related) & self._holdings)
+            hit_pairs = [(c, n) for c, n in [(s.code, s.name) for s in analysis.stocks] if c in hit_codes]
+            hit_display = ", ".join(
+                (n + f"({c})" if n else c) for c, n in hit_pairs
+            ) or ", ".join(hit_codes)
+            message += f"\n\n🔔 命中持仓: {hit_display}"
         elif related:
-            message += f"\n相关: {', '.join(related[:5])}"
+            related_pairs = [(c, n) for c, n in [(s.code, s.name) for s in analysis.stocks] if c in related]
+            related_display = ", ".join(
+                (n + f"({c})" if n else c) for c, n in related_pairs[:5]
+            ) or ", ".join(related[:5])
+            message += f"\n相关: {related_display}"
         try:
             rumps.notification(title=title, subtitle=subtitle, message=message)
             return True

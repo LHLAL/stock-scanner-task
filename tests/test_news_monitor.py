@@ -14,11 +14,14 @@ def _make_news(hash="h1", title="央行降准", content="降准0.5%"):
 
 
 def _make_analysis(hash="h1", sectors=None, stocks=None, direction="bullish", confidence=0.85):
+    from app.news.models import Stock
+    raw_stocks = stocks or ["sh601398"]
+    parsed = [Stock(code=c, name="") for c in raw_stocks]
     return NewsAnalysis(
         news_hash=hash,
         summary="降准利好",
         sectors=sectors or ["银行"],
-        stocks=stocks or ["sh601398"],
+        stocks=parsed,
         direction=direction,
         confidence=confidence,
     )

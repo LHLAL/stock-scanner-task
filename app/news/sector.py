@@ -7,7 +7,9 @@ import json
 import logging
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Sequence, Set, Union
+
+from app.news.models import Stock
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +81,26 @@ class SectorMapper:
 
         return []
 
-    def map_analysis(self, sectors: List[str], llm_stocks: List[str]) -> List[str]:
-        """Return deduplicated list of stock codes related to sectors + LLM stocks."""
+    def map_analysis(
+        self,
+        sectors: Sequence[str],
+        llm_stocks: Sequence[Union[str, Stock]],
+    ) -> List[str]:
+        """Return deduplicated list of stock codes related to sectors + LLM stocks.
+
+        llm_stocks accepts: Sequence[str] (legacy codes) or Sequence[Stock] (new).
+        """
         codes: Set[str] = set()
         for sector in sectors:
             for code in self.match_sector(sector):
                 codes.add(code)
         for stock in llm_stocks:
-            stock = stock.strip().lower()
-            if stock.startswith(("sh", "sz")) and len(stock) == 8:
-                codes.add(stock)
+            if isinstance(stock, Stock):
+                code = stock.code.strip().lower()
+            else:
+                code = str(stock).strip().lower()
+            if code.startswith(("sh", "sz")) and len(code) == 8:
+                codes.add(code)
         return sorted(codes)
 
     def get_stock_sectors(self, code: str) -> List[str]:

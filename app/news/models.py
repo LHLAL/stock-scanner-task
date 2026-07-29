@@ -18,6 +18,24 @@ VALID_CERTAINTY = {"speculative", "emerging", "established", "dominant"}
 
 
 @dataclass
+class Stock:
+    """A-share stock with both code and display name."""
+
+    code: str            # "sh601398"
+    name: str = ""       # "工商银行"
+
+    def display(self) -> str:
+        """Short form for menu items."""
+        if self.name and self.code:
+            return f"{self.name}({self.code})"
+        return self.name or self.code
+
+    def label(self) -> str:
+        """Compact form for notifications."""
+        return self.name if self.name else self.code
+
+
+@dataclass
 class RawNews:
     """Single news item from CLS, pre-LLM."""
 
@@ -34,6 +52,24 @@ class RawNews:
         return float(self.ctime)
 
 
+def _parse_stocks(raw_list) -> List[Stock]:
+    """Parse LLM stocks field. Supports new [{code, name}, ...] and legacy ['code', ...]."""
+    if not isinstance(raw_list, list):
+        return []
+    out: List[Stock] = []
+    for item in raw_list:
+        if isinstance(item, dict):
+            code = str(item.get("code", "")).strip()
+            name = str(item.get("name", "")).strip()
+            if code or name:
+                out.append(Stock(code=code, name=name))
+        elif isinstance(item, str):
+            code = item.strip().lower()
+            if code:
+                out.append(Stock(code=code, name=""))
+    return out[:10]
+
+
 @dataclass
 class NewsAnalysis:
     """LLM-analyzed news with sectors/stocks/prediction + bottleneck thesis."""
@@ -41,7 +77,7 @@ class NewsAnalysis:
     news_hash: str
     summary: str
     sectors: List[str] = field(default_factory=list)
-    stocks: List[str] = field(default_factory=list)
+    stocks: List[Stock] = field(default_factory=list)
     direction: str = "neutral"       # bullish / bearish / neutral
     confidence: float = 0.0
     time_horizon: str = "intraday"
@@ -72,11 +108,12 @@ class NewsAnalysis:
         pillars = [str(p) for p in data.get("scarcity_pillars", []) if p in VALID_SCARCITY_PILLARS]
         themes = [str(t)[:20] for t in data.get("narrative_themes", [])][:5]
         certainty = str(data.get("industry_certainty", "speculative"))
+        stocks = _parse_stocks(data.get("stocks", []))
         return cls(
             news_hash=news_hash,
             summary=str(data.get("summary", ""))[:80],
             sectors=[str(s)[:20] for s in data.get("sectors", [])][:6],
-            stocks=[str(s)[:20] for s in data.get("stocks", [])][:10],
+            stocks=stocks,
             direction=str(data.get("direction", "neutral")).lower(),
             confidence=_clip(float(data.get("confidence", 0.0))),
             time_horizon=str(data.get("time_horizon", "intraday")),
@@ -91,6 +128,11 @@ class NewsAnalysis:
             industry_certainty=certainty if certainty in VALID_CERTAINTY else "speculative",
             narrative_themes=themes,
         )
+
+    @property
+    def stock_codes(self) -> List[str]:
+        """Convenience: just the codes from stocks."""
+        return [s.code for s in self.stocks if s.code]
 
     @property
     def is_high_confidence(self) -> bool:

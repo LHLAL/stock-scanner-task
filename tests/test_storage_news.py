@@ -9,7 +9,7 @@ def _sample_dict(hash="h1"):
         "news_hash": hash,
         "summary": "央行降准",
         "sectors": ["银行", "地产"],
-        "stocks": ["sh601398"],
+        "stocks": [{"code": "sh601398", "name": "工商银行"}],
         "direction": "bullish",
         "confidence": 0.85,
         "time_horizon": "next_day",
@@ -43,7 +43,8 @@ class TestNewsAnalysis:
         assert result["direction"] == "bullish"
         assert result["confidence"] == 0.85
         assert result["sectors"] == ["银行", "地产"]
-        assert result["stocks"] == ["sh601398"]
+        assert result["stocks"][0].code == "sh601398"
+        assert result["stocks"][0].name == "工商银行"
 
     def test_get_returns_none_when_missing(self, temp_db_path):
         db = PriceDB(temp_db_path)
@@ -120,7 +121,10 @@ class TestNewsAnalysis:
         db.news_save_analysis(data)
         result = db.news_get_analysis("h")
         assert result["sectors"] == ["半导体", "集成电路"]
-        assert result["stocks"] == ["中芯国际", "海光信息"]
+        assert result["stocks"][0].code == "中芯国际"
+        assert result["stocks"][1].code == "海光信息"
+        assert result["stocks"][0].name == ""
+        assert result["stocks"][1].name == ""
         assert result["summary"] == "中文"
 
 class TestEnhancedAnalysis:

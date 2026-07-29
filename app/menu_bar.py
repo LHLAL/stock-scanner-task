@@ -313,6 +313,10 @@ class StockMenuBarApp(rumps.App):
 
     def _on_news_update(self, analysis, related, hits_holdings) -> None:
         """Callback from NewsMonitor (background thread)."""
+        from app.news.models import Stock
+        stock_pairs = [
+            (s.code, s.name) for s in analysis.stocks
+        ]  # preserve order
         with self._news_lock:
             self._pending_news.append({
                 "summary": analysis.summary,
@@ -329,7 +333,7 @@ class StockMenuBarApp(rumps.App):
                 "trend_horizon_years": analysis.trend_horizon_years,
                 "confidence": analysis.confidence,
                 "sectors": list(analysis.sectors),
-                "stocks": list(analysis.stocks),
+                "stock_pairs": stock_pairs,   # [(code, name), ...]
                 "news_category": analysis.news_category,
                 "bottleneck_order_signal": analysis.bottleneck_order_signal,
                 "bottleneck_capacity_signal": analysis.bottleneck_capacity_signal,
@@ -340,6 +344,21 @@ class StockMenuBarApp(rumps.App):
                 "analyzed_at": analysis.analyzed_at,
             })
             self._pending_news = self._pending_news[:20]
+
+    @staticmethod
+    def _format_stock(code: str, name: str) -> str:
+        """Format stock for display: 'name(code)' or fallback to code/name."""
+        if name and code:
+            return f"{name}({code})"
+        return name or code
+
+    @staticmethod
+    def _lookup_name(code: str, stock_pairs: list) -> str:
+        """Find name for code from [(code, name), ...] pairs."""
+        for c, n in stock_pairs:
+            if c == code and n:
+                return n
+        return ""
 
     def _refresh_news_menu(self) -> None:
         """Re-render the news submenu (main thread)."""
@@ -394,9 +413,17 @@ class StockMenuBarApp(rumps.App):
                 head.add(rumps.MenuItem(f"理由: {entry['rationale'][:60]}"))
             if entry["hits_holdings"]:
                 hit_codes = [c for c in entry["related"] if c in holdings_codes]
-                head.add(rumps.MenuItem(f"🔔 命中持仓: {','.join(hit_codes)}"))
+                hit_names = [
+                    self._format_stock(c, self._lookup_name(c, entry.get("stock_pairs", [])))
+                    for c in hit_codes
+                ]
+                head.add(rumps.MenuItem(f"🔔 命中持仓: {', '.join(hit_names)}"))
             elif entry["related"]:
-                head.add(rumps.MenuItem(f"相关股: {','.join(entry['related'][:6])}"))
+                related_strs = [
+                    self._format_stock(c, self._lookup_name(c, entry.get("stock_pairs", [])))
+                    for c in entry["related"][:6]
+                ]
+                head.add(rumps.MenuItem(f"相关股: {', '.join(related_strs)}"))
             head.add(rumps.MenuItem(f"⏱ {ts}"))
             self._news_item.add(head)
             self._news_detail_items.append(head)

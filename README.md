@@ -248,7 +248,7 @@ echo 'export OLLAMA_API_KEY=your_key_here' >> ~/.zshrc
 
 | 维度 | 字段 | 用途 |
 |------|------|------|
-| 影响对象 | `sectors` + `stocks` | 板块匹配 + 命中持仓 |
+| 影响对象 | `sectors` + `stocks`（`[{code, name}, ...]`）| 板块匹配 + 命中持仓；菜单/通知显示 `name(code)` |
 | 影响方向 | `direction` (bullish/bearish/neutral) | emoji + 标签 |
 | 置信度 | `confidence` (0-1) | 通知门控 |
 | 影响时效 | `time_horizon` (intraday/next_day/weekly) | 预留过滤 |
