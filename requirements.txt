@@ -2,3 +2,7 @@ rumps>=0.4.0
 requests>=2.31.0
 pyobjc>=10.0
 mootdx>=0.7.0
+
+# 测试依赖（开发用，CI 也需要）
+pytest>=7.0
+pytest-cov>=4.0
