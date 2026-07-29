@@ -126,12 +126,27 @@ NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请
 - certainty: speculative（投机）→ emerging（萌芽）→ established（确立）→ dominant（主导）
 
 ### 通用规则
-- 仅在明确政策/数据/事件时给 bullish/bearish；模糊给 neutral + confidence < 0.5
 - 不要给投资建议，只做事实分析
 - sectors 必须是行业大类（半导体/白酒/银行等），不要给个股
 - news_category 必填，决定下游通知权重
 - narrative_themes 用简短标签（如 "AI算力"、"CPO"、"国产替代"），≤5 个
 - is_kneck 仅在新闻明显涉及卡脖子/单点关键环节时设为 true
+
+### 置信度校准（必须严格遵守，超严格）
+
+按以下分档给 direction 和 confidence：
+
+| 档位 | confidence | direction 要求 |
+|------|-----------|---------------|
+| **噪声**（信息不足、纯观点、传闻） | 0.0 - 0.4 | **必须** neutral；不要写具体板块 |
+| **模糊**（侧面对接、未明确表态） | 0.45 - 0.65 | **应该** neutral；若要 bullish/bearish 必须新闻极清晰 |
+| **明确**（具体数字、明确政策、落地事件） | 0.70 - 0.85 | 可 bullish/bearish |
+| **高确信**（央行/部委级数据、明确订单金额） | 0.90 - 1.00 | bullish/bearish 均可 |
+
+**硬性规则**：
+- confidence < 0.5 → direction 必须是 neutral（下游会过滤掉低置信度信号）
+- confidence ≥ 0.7 才能给 bullish/bearish，否则一律 neutral
+- 模糊信号宁可给 neutral + 0.3，也不要硬给 0.65（用户会被误导）
 """
 
 

@@ -24,6 +24,7 @@ class ClsConfig:
 @dataclass
 class NewsFilterConfig:
     keyword_threshold: float = 0.5
+    min_useful_confidence: float = 0.5     # below this, force neutral (noise filter)
     min_confidence_for_notify: float = 0.8
     min_confidence_for_holdings_alert: float = 0.65
     bottleneck_confidence_floor: float = 0.65
@@ -175,6 +176,7 @@ def load_config(path: Optional[str] = None) -> AppConfig:
             ),
             filter=NewsFilterConfig(
                 keyword_threshold=data.get("news", {}).get("filter", {}).get("keyword_threshold", 0.5),
+                min_useful_confidence=data.get("news", {}).get("filter", {}).get("min_useful_confidence", 0.5),
                 min_confidence_for_notify=data.get("news", {}).get("filter", {}).get("min_confidence_for_notify", 0.8),
                 min_confidence_for_holdings_alert=data.get("news", {}).get("filter", {}).get("min_confidence_for_holdings_alert", 0.65),
                 bottleneck_confidence_floor=data.get("news", {}).get("filter", {}).get("bottleneck_confidence_floor", 0.65),

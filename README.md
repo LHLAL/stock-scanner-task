@@ -232,7 +232,8 @@ echo 'export OLLAMA_API_KEY=your_key_here' >> ~/.zshrc
 - **关键词预筛**（阈值 0.5）：约 160 词覆盖**卡脖子投资哲学**（订单/产能/满产/CPO/HBM/磷化铟/人形机器人/光刻机 等主题词）+ 政策/财报/订单信号；同时 26 词**黑名单**（美股/港股/美光/英伟达/美玉米 等海外噪声）降权
 - **LLM 分析**（按"卡脖子供应链瓶颈理论"）：本地 Ollama 调用 `minimax-m2.5:cloud`，强制 JSON 输出，包含 5 维核心 + 瓶颈 9 维增强
 - **板块匹配**：LLM 输出 sectors 通过 fuzzy match 映射到 `docs/sector_dict.json`（约 70 板块 / 230 只代表股）
-- **通知触发（三层门控，避免噪音）**：
+- **通知触发（三层门控 + 噪声过滤）**：
+  - **噪声过滤**: `confidence < 0.5` 一律不通知（即使 LLM 返回 bullish 也降级）
   - **Tier 1**: `confidence ≥ 0.8` 且非中性
   - **Tier 2**: 命中持仓 + `confidence ≥ 0.65` 且非中性
   - **Tier 3**: 卡脖子信号 + `confidence ≥ 0.65` 且非中性

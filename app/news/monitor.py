@@ -209,11 +209,17 @@ class NewsMonitor:
         Tier 2 (HOLDINGS):    confidence ≥ holdings_alert AND non-neutral AND hits holdings
         Tier 3 (BOTTLENECK):  is_bottleneck_signal AND confidence ≥ floor AND non-neutral
 
+        Plus: per-analysis usefulness floor (min_useful_confidence) — below this
+        we treat even directional outputs as noise.
+
         Plus: daily notification cap (max_notifications_per_day).
         """
         cfg = self._config.filter
-        non_neutral = analysis.direction in ("bullish", "bearish")
 
+        if analysis.confidence < cfg.min_useful_confidence:
+            return False
+
+        non_neutral = analysis.direction in ("bullish", "bearish")
         if not non_neutral:
             return False
 

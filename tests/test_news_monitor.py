@@ -533,3 +533,70 @@ class TestNotificationDailyCap:
         ).fetchone()[0]
         conn.close()
         assert row == 1  # analysis saved
+
+
+class TestMinUsefulConfidence:
+    """Per-analysis usefulness floor: conf < 0.5 → silent noise."""
+
+    def test_default_min_useful_confidence_is_half(self, setup_monitor):
+        assert setup_monitor._config.filter.min_useful_confidence == 0.5
+
+    def test_low_confidence_bullish_blocked(self, setup_monitor):
+        # 0.35 confidence 不足以说明 bullish 是有效信号
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.35),
+            hits_holdings=False,
+        ) is False
+
+    def test_low_confidence_bearish_blocked(self, setup_monitor):
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bearish", confidence=0.4),
+            hits_holdings=False,
+        ) is False
+
+    def test_low_confidence_kneck_blocked(self, setup_monitor):
+        # 即使卡脖子，conf 0.4 仍被 min_useful 拦下
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish",
+                        confidence=0.4, is_kneck=True),
+            hits_holdings=False,
+        ) is False
+
+    def test_low_confidence_holdings_blocked(self, setup_monitor):
+        # 持仓命中 + 低置信度 仍被拦下（即使 holdings floor 0.65 > 0.5）
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.4),
+            hits_holdings=True,
+        ) is False
+
+    def test_at_threshold_passes(self, setup_monitor):
+        # conf = 0.5 正好达到 min_useful，下游 tier 检查生效
+        # tier1 需要 0.8，conf 0.5 不够；但当 holdings=True 且非中性，会进 tier2 检查 0.65
+        # 这里应该返回 False（不到 0.65）但通过了 min_useful
+        # 测试边界: conf = 0.5 没到 holdings_alert (0.65), 返回 False
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.5),
+            hits_holdings=True,
+        ) is False
+
+    def test_exactly_at_min_useful_with_high_tier(self, setup_monitor):
+        # conf = 0.5 + holdings, 但 min_confidence_for_holdings_alert = 0.65
+        # 即使 conf 0.5 > min_useful 0.5, 不到 0.65 仍不能通知
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.5),
+            hits_holdings=True,
+        ) is False
+
+    def test_above_threshold_works_normally(self, setup_monitor):
+        # 正常情况：conf 0.85, bullish → tier1
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="bullish", confidence=0.85),
+            hits_holdings=False,
+        ) is True
+
+    def test_below_min_useful_even_neutral_stays_blocked(self, setup_monitor):
+        # neutral + 低 conf: 本来就不会通知，min_useful 是双保险
+        assert setup_monitor._should_notify(
+            NewsAnalysis(news_hash="h", summary="", direction="neutral", confidence=0.3),
+            hits_holdings=False,
+        ) is False

@@ -26,8 +26,9 @@
       "poll_interval_seconds": 20,
       "off_hours_poll_interval_seconds": 600
     },
-    "filter": {
+"filter": {
       "keyword_threshold": 0.5,
+      "min_useful_confidence": 0.5,
       "min_confidence_for_notify": 0.8,
       "min_confidence_for_holdings_alert": 0.65,
       "bottleneck_confidence_floor": 0.65,
