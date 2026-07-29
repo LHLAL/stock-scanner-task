@@ -217,10 +217,10 @@ echo 'export OLLAMA_API_KEY=your_key_here' >> ~/.zshrc
 {
   "news": {
     "enabled": true,
-    "cls": {"sign": null, "cookie": null, "poll_interval_seconds": 30, "off_hours_poll_interval_seconds": 300},
-    "filter": {"keyword_threshold": 0.3, "min_confidence_for_notify": 0.7, "min_confidence_for_holdings_alert": 0.5},
+    "cls": {"sign": null, "cookie": null, "poll_interval_seconds": 20, "off_hours_poll_interval_seconds": 600},
+    "filter": {"keyword_threshold": 0.4, "min_confidence_for_notify": 0.7, "min_confidence_for_holdings_alert": 0.5},
     "llm": {"model": "minimax-m2.5:cloud", "host": "http://localhost:11434", "api_key": null,
-            "max_per_minute": 10, "cache_ttl_hours": 24, "request_timeout_seconds": 30},
+            "max_per_minute": 12, "cache_ttl_hours": 24, "request_timeout_seconds": 30, "daily_limit": 1000},
     "sector": {"cache_ttl_days": 7, "force_refresh": false}
   }
 }
@@ -299,7 +299,8 @@ badge: 🔧卡脖子 📈订单爆发 ⚡满产
 
 ### 限流
 
-- LLM 调用令牌桶：默认 10/min（可调 `llm.max_per_minute`）
+- LLM 调用令牌桶：默认 12/min（可调 `llm.max_per_minute`）
+- LLM **日上限**：默认 1000/天（`llm.daily_limit`）。超限自动跳过 LLM 调用直到次日 0 点；90% 触发警告日志；设 `0` 禁用
 - 新闻本身无速率限制（CLS 官方 API 免费）
 - 健康检查失败时自动降级为「只抓新闻不分析」
 

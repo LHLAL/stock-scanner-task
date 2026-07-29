@@ -23,11 +23,11 @@
     "cls": {
       "sign": null,
       "cookie": null,
-      "poll_interval_seconds": 30,
-      "off_hours_poll_interval_seconds": 300
+      "poll_interval_seconds": 20,
+      "off_hours_poll_interval_seconds": 600
     },
     "filter": {
-      "keyword_threshold": 0.3,
+      "keyword_threshold": 0.4,
       "min_confidence_for_notify": 0.7,
       "min_confidence_for_holdings_alert": 0.5
     },
@@ -35,9 +35,10 @@
       "model": "minimax-m2.5:cloud",
       "host": "http://localhost:11434",
       "api_key": null,
-      "max_per_minute": 10,
+      "max_per_minute": 12,
       "cache_ttl_hours": 24,
-      "request_timeout_seconds": 30
+      "request_timeout_seconds": 30,
+      "daily_limit": 1000
     },
     "sector": {
       "cache_ttl_days": 7,

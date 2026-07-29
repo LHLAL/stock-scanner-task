@@ -2,6 +2,7 @@
 import logging
 import threading
 import time
+from datetime import date
 from typing import List, Set
 
 import rumps
@@ -49,6 +50,10 @@ class NewsMonitor:
         self._llm_available = True
         self._last_poll_ts: float = 0.0
 
+        self._daily_count: int = 0
+        self._daily_count_date: date = date.today()
+        self._daily_limit_warned: bool = False
+
     def health_check(self) -> dict:
         """Return status of each component."""
         cls_ok = True
@@ -77,6 +82,48 @@ class NewsMonitor:
             else self._config.cls.off_hours_poll_interval_seconds
         )
 
+    def _check_daily_limit(self) -> bool:
+        """Reset counter on date change; warn at 90%; refuse at 100%."""
+        limit = self._config.llm.daily_limit
+        if limit <= 0:
+            return True
+
+        today = date.today()
+        if today != self._daily_count_date:
+            self._daily_count = 0
+            self._daily_count_date = today
+            self._daily_limit_warned = False
+
+        if self._daily_count >= limit:
+            if not self._daily_limit_warned:
+                logger.warning(
+                    "[NewsMonitor] daily LLM limit reached (%d/%d), pausing LLM until tomorrow",
+                    self._daily_count, limit,
+                )
+                self._daily_limit_warned = True
+            return False
+
+        if self._daily_count >= limit * 0.9 and not self._daily_limit_warned:
+            logger.warning(
+                "[NewsMonitor] approaching daily LLM limit (%d/%d, %.0f%%)",
+                self._daily_count, limit,
+                100 * self._daily_count / limit,
+            )
+            self._daily_limit_warned = True
+
+        return True
+
+    @property
+    def daily_usage(self) -> dict:
+        """For UI / debug: current LLM usage stats."""
+        limit = self._config.llm.daily_limit
+        return {
+            "date": self._daily_count_date.isoformat(),
+            "count": self._daily_count,
+            "limit": limit,
+            "remaining": max(0, limit - self._daily_count) if limit > 0 else None,
+        }
+
     def _loop(self) -> None:
         while self._running:
             try:
@@ -104,7 +151,11 @@ class NewsMonitor:
                 continue
 
             self._bucket.acquire()
+            if not self._check_daily_limit():
+                logger.debug(f"[NewsMonitor] daily limit hit, skipping LLM for {news.hash}")
+                continue
             analysis = self._analyzer.analyze(news)
+            self._daily_count += 1
             if analysis is None:
                 logger.debug(f"[NewsMonitor] LLM failed for {news.hash}")
                 continue

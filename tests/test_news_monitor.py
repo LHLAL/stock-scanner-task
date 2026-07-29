@@ -300,3 +300,74 @@ class TestBottleneckNotify:
         ).fetchone()[0]
         conn.close()
         assert flag == 0
+
+
+class TestDailyLimit:
+    def test_default_limit_is_1000(self, temp_db_path):
+        from app.config import LlmConfig
+        cfg = _make_news_config()
+        assert cfg.llm.daily_limit == 1000
+
+    def test_limit_zero_means_unlimited(self, temp_db_path):
+        cfg = _make_news_config(llm=LlmConfig(daily_limit=0))
+        db = PriceDB(temp_db_path)
+        monitor = NewsMonitor(config=cfg, holdings=set(), db=db)
+        assert monitor._check_daily_limit() is True
+
+    def test_count_increments_on_successful_llm_call(self, setup_monitor):
+        setup_monitor._fetcher.fetch.return_value = [_make_news()]
+        setup_monitor._analyzer.analyze.return_value = _make_analysis()
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+        assert setup_monitor._daily_count == 1
+
+    def test_skips_when_limit_reached(self, setup_monitor):
+        setup_monitor._daily_count = setup_monitor._config.llm.daily_limit
+        setup_monitor._fetcher.fetch.return_value = [_make_news()]
+
+        processed = []
+        setup_monitor._on_update = lambda a, r, h: processed.append(a)
+        setup_monitor._tick()
+
+        assert processed == []
+        setup_monitor._analyzer.analyze.assert_not_called()
+
+    def test_warns_at_90_percent(self, setup_monitor, caplog):
+        import logging
+        setup_monitor._daily_count = int(setup_monitor._config.llm.daily_limit * 0.95)
+        with caplog.at_level(logging.WARNING, logger="app.news.monitor"):
+            setup_monitor._check_daily_limit()
+        assert any("daily LLM limit" in r.message for r in caplog.records)
+
+    def test_does_not_warn_when_below_threshold(self, setup_monitor):
+        setup_monitor._daily_count = int(setup_monitor._config.llm.daily_limit * 0.5)
+        assert setup_monitor._check_daily_limit() is True
+        assert setup_monitor._daily_limit_warned is False
+
+    def test_daily_usage_property(self, setup_monitor):
+        setup_monitor._daily_count = 100
+        usage = setup_monitor.daily_usage
+        assert usage["count"] == 100
+        assert usage["limit"] == 1000
+        assert usage["remaining"] == 900
+
+    def test_daily_usage_unlimited(self, setup_monitor):
+        setup_monitor._config.llm.daily_limit = 0
+        usage = setup_monitor.daily_usage
+        assert usage["remaining"] is None
+
+    def test_limit_resets_on_date_change(self, setup_monitor):
+        from datetime import date, timedelta
+        setup_monitor._daily_count = 999
+        setup_monitor._daily_count_date = date.today() - timedelta(days=1)
+        setup_monitor._check_daily_limit()
+        assert setup_monitor._daily_count == 0
+        assert setup_monitor._daily_limit_warned is False
+
+    def test_llm_failure_does_not_increment(self, setup_monitor):
+        setup_monitor._fetcher.fetch.return_value = [_make_news()]
+        setup_monitor._analyzer.analyze.return_value = None
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+        assert setup_monitor._daily_count == 1
