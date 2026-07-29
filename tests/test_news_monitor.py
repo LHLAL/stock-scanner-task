@@ -600,3 +600,103 @@ class TestMinUsefulConfidence:
             NewsAnalysis(news_hash="h", summary="", direction="neutral", confidence=0.3),
             hits_holdings=False,
         ) is False
+
+
+class TestMinSaveConfidence:
+    """Pure noise (conf < min_save_confidence) should not be saved to DB."""
+
+    def test_default_min_save_confidence(self, setup_monitor):
+        assert setup_monitor._config.filter.min_save_confidence == 0.25
+
+    def test_pure_noise_not_saved(self, setup_monitor, temp_db_path):
+        # conf 0.15 (生物医药新闻等) 应被拒绝
+        news = _make_news(hash="noise-test")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="noise-test", summary="生物医药板块上涨", direction="neutral",
+            confidence=0.15,
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        processed = []
+        setup_monitor._on_update = lambda a, r, h: processed.append(a)
+        setup_monitor._tick()
+
+        assert processed == []
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM news_analysis WHERE news_hash = ?", ("noise-test",)
+        ).fetchone()[0]
+        conn.close()
+        assert count == 0
+
+    def test_at_threshold_saved(self, setup_monitor, temp_db_path):
+        # conf 0.25 刚好达到 min_save → 应保存
+        news = _make_news(hash="border-save")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="border-save", summary="中性新闻", direction="neutral",
+            confidence=0.25,
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM news_analysis WHERE news_hash = ?", ("border-save",)
+        ).fetchone()[0]
+        conn.close()
+        assert count == 1
+
+    def test_above_threshold_saved(self, setup_monitor, temp_db_path):
+        news = _make_news(hash="above")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="above", summary="利好", direction="bullish", confidence=0.7,
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM news_analysis WHERE news_hash = ?", ("above",)
+        ).fetchone()[0]
+        conn.close()
+        assert count == 1
+
+    def test_news_cache_marked_seen_even_when_skipped(self, setup_monitor, temp_db_path):
+        # 即使不保存分析，news_cache 也应该标记为 seen（避免重复 LLM 调用）
+        news = _make_news(hash="noise-2")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="noise-2", summary="噪声", direction="neutral", confidence=0.1,
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+
+        import sqlite3
+        conn = sqlite3.connect(temp_db_path)
+        flag = conn.execute(
+            "SELECT analyzed FROM news_cache WHERE hash = ?", ("noise-2",)
+        ).fetchone()[0]
+        conn.close()
+        # Should be marked analyzed=0 (we saw it but didn't analyze)
+        assert flag == 0
+
+    def test_llm_call_still_counts_against_daily_limit(self, setup_monitor):
+        # 即便不保存，LLM 调用还是消耗了 daily_limit 配额（避免重试循环）
+        news = _make_news(hash="noise-quota")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = NewsAnalysis(
+            news_hash="noise-quota", summary="x", direction="neutral", confidence=0.1,
+        )
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+
+        assert setup_monitor._daily_count == 1

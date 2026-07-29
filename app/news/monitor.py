@@ -163,6 +163,12 @@ class NewsMonitor:
                 logger.debug(f"[NewsMonitor] LLM failed for {news.hash}")
                 continue
 
+            if analysis.confidence < self._config.filter.min_save_confidence:
+                logger.debug(
+                    f"[NewsMonitor] pure noise (conf {analysis.confidence:.2f}), skipping save"
+                )
+                continue
+
             related = self._sector_mapper.map_analysis(analysis.sectors, analysis.stocks)
             hits_holdings: bool = bool(self._holdings & set(related))
 

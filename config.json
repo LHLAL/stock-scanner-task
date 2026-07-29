@@ -28,6 +28,7 @@
     },
 "filter": {
       "keyword_threshold": 0.5,
+      "min_save_confidence": 0.25,
       "min_useful_confidence": 0.5,
       "min_confidence_for_notify": 0.8,
       "min_confidence_for_holdings_alert": 0.65,
