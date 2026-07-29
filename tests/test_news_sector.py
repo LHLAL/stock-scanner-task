@@ -1,4 +1,5 @@
-"""Tests for app.news.sector: SectorMapper."""
+"""Tests for app.news.sector: SectorMapper (returns Stock)."""
+from app.news.models import Stock
 from app.news.sector import SectorMapper
 
 
@@ -11,29 +12,41 @@ class TestSectorMapper:
         assert len(self.mapper._stock_to_sectors) > 0
 
     def test_exact_match(self):
-        codes = self.mapper.match_sector("半导体")
-        assert len(codes) > 0
+        stocks = self.mapper.match_sector("半导体")
+        codes = {s.code for s in stocks}
         assert "sh688981" in codes
 
     def test_substring_match_input_in_key(self):
-        codes = self.mapper.match_sector("新能源车")
-        assert len(codes) > 0
+        stocks = self.mapper.match_sector("新能源车")
+        codes = {s.code for s in stocks}
         assert "sz002594" in codes
 
     def test_substring_match_key_in_input(self):
-        codes = self.mapper.match_sector("银行板块")
-        assert len(codes) > 0
+        stocks = self.mapper.match_sector("银行板块")
+        codes = {s.code for s in stocks}
         assert "sh601398" in codes
 
     def test_fuzzy_match_with_typo(self):
-        codes = self.mapper.match_sector("锂电")
-        assert len(codes) > 0
+        stocks = self.mapper.match_sector("锂电")
+        assert len(stocks) > 0
 
     def test_no_match_returns_empty(self):
         assert self.mapper.match_sector("完全不存在的板块XYZ123") == []
 
     def test_empty_input_returns_empty(self):
         assert self.mapper.match_sector("") == []
+
+    def test_match_returns_stock_objects_with_names(self):
+        stocks = self.mapper.match_sector("银行")
+        assert all(isinstance(s, Stock) for s in stocks)
+        named = [s for s in stocks if s.name]
+        assert len(named) >= 5
+
+    def test_bank_stocks_have_chinese_names(self):
+        stocks = self.mapper.match_sector("银行")
+        names = [s.name for s in stocks if s.name]
+        assert "工商银行" in names
+        assert "招商银行" in names
 
     def test_get_stock_sectors(self):
         sectors = self.mapper.get_stock_sectors("sh600519")
@@ -44,24 +57,23 @@ class TestSectorMapper:
         assert self.mapper.get_stock_sectors("sh000000") == []
 
     def test_map_analysis_combines_sectors_and_stocks(self):
-        codes = self.mapper.map_analysis(["半导体", "银行"], ["sh600519"])
-        assert "sh688981" in codes      # from 半导体
-        assert "sh601398" in codes      # from 银行
-        assert "sh600519" in codes      # from LLM stocks
-        assert len(codes) == len(set(codes))
-
-    def test_map_analysis_with_unknown_sector(self):
-        codes = self.mapper.map_analysis(["不存在板块"], ["sh600519"])
-        assert codes == ["sh600519"]
+        stocks = self.mapper.map_analysis(
+            ["半导体", "银行"],
+            [Stock(code="sh600519", name="贵州茅台")],
+        )
+        codes = {s.code for s in stocks}
+        assert "sh688981" in codes
+        assert "sh601398" in codes
+        assert "sh600519" in codes
 
     def test_map_analysis_dedup(self):
-        codes = self.mapper.map_analysis(["半导体", "集成电路"], [])
+        stocks = self.mapper.map_analysis(["半导体", "集成电路"], [])
+        codes = [s.code for s in stocks]
         assert len(codes) == len(set(codes))
 
-    def test_map_analysis_skips_lowercase_stock(self):
-        codes = self.mapper.map_analysis([], ["sh600519", "abc"])
-        assert "sh600519" in codes
-        assert "abc" not in codes
+    def test_map_analysis_skips_legacy_strings(self):
+        stocks = self.mapper.map_analysis([], ["sh600519"])
+        assert any(s.code == "sh600519" for s in stocks)
 
 
 class TestSectorMapperMissingFile:

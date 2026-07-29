@@ -169,10 +169,20 @@ class PriceDB:
         """Persist a NewsAnalysis (dict form) for caching/dedup.
 
         stocks in analysis_dict can be List[str] (legacy) or List[{code, name}].
+        related (optional) is List[{code, name}] from sector expansion.
+        Merged into a single flat list [{code, name}, ...] for the DB.
         """
-
-        from app.news.models import _parse_stocks
+        from app.news.models import _parse_stocks, Stock
         stocks = _parse_stocks(analysis_dict.get("stocks", []))
+        by_code: dict = {s.code: s for s in stocks if s.code}
+        for r in analysis_dict.get("related", []) or []:
+            if isinstance(r, dict) and r.get("code"):
+                code = r["code"]
+                if code not in by_code or not by_code[code].name:
+                    name = r.get("name", "") or by_code.get(code, Stock(code=code, name="")).name
+                    by_code[code] = Stock(code=code, name=name)
+
+        merged = [{"code": s.code, "name": s.name} for s in by_code.values()]
         now = time.time()
         with self._lock:
             conn = sqlite3.connect(self._db_path)
@@ -184,10 +194,7 @@ class PriceDB:
                     analysis_dict["news_hash"],
                     analysis_dict.get("summary", ""),
                     json.dumps(analysis_dict.get("sectors", []), ensure_ascii=False),
-                    json.dumps(
-                        [{"code": s.code, "name": s.name} for s in stocks],
-                        ensure_ascii=False,
-                    ),
+                    json.dumps(merged, ensure_ascii=False),
                     analysis_dict.get("direction", "neutral"),
                     float(analysis_dict.get("confidence", 0.0)),
                     analysis_dict.get("time_horizon", "intraday"),

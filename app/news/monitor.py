@@ -11,7 +11,7 @@ from app.config import NewsConfig
 from app.monitor import is_market_open
 from app.news.analyzer import OllamaAnalyzer, TokenBucket, keyword_score
 from app.news.fetcher import ClsFetcher
-from app.news.models import NewsAnalysis
+from app.news.models import NewsAnalysis, Stock
 from app.news.sector import SectorMapper
 from app.storage import PriceDB
 
@@ -170,7 +170,8 @@ class NewsMonitor:
                 continue
 
             related = self._sector_mapper.map_analysis(analysis.sectors, analysis.stocks)
-            hits_holdings: bool = bool(self._holdings & set(related))
+            related_codes = {s.code for s in related}
+            hits_holdings: bool = bool(self._holdings & related_codes)
 
             analysis_dict = {
                 "news_hash": analysis.news_hash,
@@ -191,6 +192,7 @@ class NewsMonitor:
                 "trend_horizon_years": analysis.trend_horizon_years,
                 "industry_certainty": analysis.industry_certainty,
                 "narrative_themes": analysis.narrative_themes,
+                "related": [{"code": s.code, "name": s.name} for s in related],
             }
             self._db.news_save_analysis(analysis_dict)
 
@@ -250,7 +252,12 @@ class NewsMonitor:
 
         return False
 
-    def _notify(self, analysis: NewsAnalysis, related: List[str], hits_holdings: bool) -> bool:
+    def _notify(
+        self,
+        analysis: NewsAnalysis,
+        related: List[Stock],
+        hits_holdings: bool,
+    ) -> bool:
         """Emit macOS notification; returns True if sent, False if capped."""
         if self._notif_count >= self._config.filter.max_notifications_per_day:
             logger.debug(
@@ -272,17 +279,17 @@ class NewsMonitor:
         if analysis.industry_certainty != "speculative":
             message += f"\n确定性: {analysis.industry_certainty}  时长: {analysis.trend_horizon_years}年"
         if hits_holdings:
-            hit_codes = sorted(set(related) & self._holdings)
-            hit_pairs = [(c, n) for c, n in [(s.code, s.name) for s in analysis.stocks] if c in hit_codes]
+            hit_codes = {s.code for s in related if self._holdings and s.code in self._holdings}
+            hit_pairs = [(s.code, s.name) for s in related if s.code in hit_codes]
             hit_display = ", ".join(
                 (n + f"({c})" if n else c) for c, n in hit_pairs
-            ) or ", ".join(hit_codes)
+            ) or ", ".join(sorted(hit_codes))
             message += f"\n\n🔔 命中持仓: {hit_display}"
         elif related:
-            related_pairs = [(c, n) for c, n in [(s.code, s.name) for s in analysis.stocks] if c in related]
+            related_pairs = [(s.code, s.name) for s in related[:5]]
             related_display = ", ".join(
-                (n + f"({c})" if n else c) for c, n in related_pairs[:5]
-            ) or ", ".join(related[:5])
+                (n + f"({c})" if n else c) for c, n in related_pairs
+            ) or ", ".join(s.code for s in related[:5])
             message += f"\n相关: {related_display}"
         try:
             rumps.notification(title=title, subtitle=subtitle, message=message)

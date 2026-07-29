@@ -112,7 +112,8 @@ class TestNewsAnalysis:
             "news_hash": "h",
             "summary": "中文",
             "sectors": ["半导体", "集成电路"],
-            "stocks": ["中芯国际", "海光信息"],
+            "stocks": ["sz002371", "sh688041"],  # legacy codes-as-strings
+            "related": [],
             "direction": "bullish",
             "confidence": 0.9,
             "time_horizon": "intraday",
@@ -121,10 +122,9 @@ class TestNewsAnalysis:
         db.news_save_analysis(data)
         result = db.news_get_analysis("h")
         assert result["sectors"] == ["半导体", "集成电路"]
-        assert result["stocks"][0].code == "中芯国际"
-        assert result["stocks"][1].code == "海光信息"
+        assert result["stocks"][0].code == "sz002371"
+        assert result["stocks"][1].code == "sh688041"
         assert result["stocks"][0].name == ""
-        assert result["stocks"][1].name == ""
         assert result["summary"] == "中文"
 
 class TestEnhancedAnalysis:

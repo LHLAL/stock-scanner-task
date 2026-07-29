@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.config import ClsConfig, LlmConfig, NewsConfig, NewsFilterConfig
-from app.news.models import NewsAnalysis, RawNews
+from app.news.models import NewsAnalysis, RawNews, Stock
 from app.news.monitor import NewsMonitor
 from app.storage import PriceDB
 
@@ -14,7 +14,6 @@ def _make_news(hash="h1", title="央行降准", content="降准0.5%"):
 
 
 def _make_analysis(hash="h1", sectors=None, stocks=None, direction="bullish", confidence=0.85):
-    from app.news.models import Stock
     raw_stocks = stocks or ["sh601398"]
     parsed = [Stock(code=c, name="") for c in raw_stocks]
     return NewsAnalysis(
@@ -88,7 +87,7 @@ class TestNewsMonitorTick:
         news = _make_news()
         setup_monitor._fetcher.fetch.return_value = [news]
         setup_monitor._analyzer.analyze.return_value = _make_analysis()
-        setup_monitor._sector_mapper.map_analysis.return_value = ["sh601398"]
+        setup_monitor._sector_mapper.map_analysis.return_value = [Stock(code="sh601398", name="")] # noqa
 
         processed = []
         setup_monitor._on_update = lambda a, r, h: processed.append((a, r, h))
@@ -97,7 +96,7 @@ class TestNewsMonitorTick:
         assert len(processed) == 1
         analysis, related, hits = processed[0]
         assert analysis.confidence == 0.85
-        assert "sh601398" in related
+        assert any(s.code == "sh601398" for s in related)
         assert hits is True  # 命中 holdings
 
     def test_skips_low_keyword_score(self, setup_monitor):
@@ -139,7 +138,7 @@ class TestNewsMonitorTick:
         news = _make_news(hash="persist-test")
         setup_monitor._fetcher.fetch.return_value = [news]
         setup_monitor._analyzer.analyze.return_value = _make_analysis(hash="persist-test")
-        setup_monitor._sector_mapper.map_analysis.return_value = ["sh601398"]
+        setup_monitor._sector_mapper.map_analysis.return_value = [Stock(code="sh601398", name="")] # noqa
 
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
@@ -172,7 +171,7 @@ class TestNewsMonitorTick:
         setup_monitor._analyzer.analyze.return_value = _make_analysis(
             hash="low-test", confidence=0.4, direction="neutral"
         )
-        setup_monitor._sector_mapper.map_analysis.return_value = ["sh999999"]  # not in holdings
+        setup_monitor._sector_mapper.map_analysis.return_value = [Stock(code="sh999999", name="")] # noqa  # not in holdings
 
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
@@ -192,7 +191,7 @@ class TestNewsMonitorTick:
         setup_monitor._analyzer.analyze.return_value = _make_analysis(
             hash="hit-test", confidence=0.55, direction="bullish"
         )
-        setup_monitor._sector_mapper.map_analysis.return_value = ["sh601398"]
+        setup_monitor._sector_mapper.map_analysis.return_value = [Stock(code="sh601398", name="")] # noqa
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
 
@@ -211,7 +210,7 @@ class TestNewsMonitorTick:
         setup_monitor._analyzer.analyze.return_value = _make_analysis(
             hash="hit-test", confidence=0.70, direction="bullish"
         )
-        setup_monitor._sector_mapper.map_analysis.return_value = ["sh601398"]
+        setup_monitor._sector_mapper.map_analysis.return_value = [Stock(code="sh601398", name="")] # noqa
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
 
@@ -351,7 +350,7 @@ class TestBottleneckNotify:
             news_hash="boring-test", summary="普通", direction="neutral",
             confidence=0.5,
         )
-        setup_monitor._sector_mapper.map_analysis.return_value = ["sh999999"]
+        setup_monitor._sector_mapper.map_analysis.return_value = [Stock(code="sh999999", name="")] # noqa
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
 
