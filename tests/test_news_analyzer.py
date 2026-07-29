@@ -195,3 +195,135 @@ class TestOllamaAnalyzerAnalyze:
             prompt = mock_post.call_args.kwargs["json"]["prompt"]
             assert long_content[:1000] in prompt
             assert long_content not in prompt
+
+class TestBottleneckKeywords:
+    """Tests for the 卡脖子投资哲学 keyword dictionary expansion."""
+
+    def test_kneck_keyword_high_weight(self):
+        assert keyword_score("卡脖子技术突破", "") >= 0.8
+
+    def test_domestic_substitution(self):
+        assert keyword_score("国产替代加速", "") >= 0.7
+
+    def test_supply_shortage(self):
+        assert keyword_score("芯片紧缺涨价", "") >= 0.7
+
+    def test_order_keyword(self):
+        # Previously 订单 was MISSING from dictionary — this was a critical gap
+        assert keyword_score("公司拿下大单", "") >= 0.7
+
+    def test_capacity_keyword(self):
+        # 产能 was MISSING — central to 三硬指标
+        assert keyword_score("产能利用率100%", "") >= 0.7
+
+    def test_full_production_signal(self):
+        assert keyword_score("工厂满产", "") >= 0.5
+
+    def test_bottleneck_signal(self):
+        assert keyword_score("供应链瓶颈", "") >= 0.5
+
+    def test_pricing_power(self):
+        assert keyword_score("涨价提价", "") >= 0.5
+
+    def test_ai_compute_theme(self):
+        score = keyword_score("AI算力芯片", "")
+        assert score >= 0.6
+
+    def test_cpo_theme(self):
+        score = keyword_score("CPO光模块", "")
+        assert score >= 0.7
+
+    def test_hbm_theme(self):
+        score = keyword_score("HBM紧缺", "")
+        assert score >= 0.7
+
+    def test_humanoid_robot_theme(self):
+        score = keyword_score("人形机器人量产", "")
+        assert score >= 0.7
+
+    def test_photolithography_theme(self):
+        score = keyword_score("光刻机突破", "")
+        assert score >= 0.7
+
+    def test_indium_phosphide_theme(self):
+        score = keyword_score("磷化铟衬底", "")
+        assert score >= 0.7
+
+
+class TestBlacklistKeywords:
+    """Overseas / noise keywords should produce negative scores."""
+
+    def test_us_stocks_blacklisted(self):
+        assert keyword_score("美股盘前", "") < 0.0
+
+    def test_hk_stocks_blacklisted(self):
+        assert keyword_score("港股大涨", "") < 0.0
+
+    def test_specific_overseas_company(self):
+        assert keyword_score("美光科技暴跌", "") < 0.0
+
+    def test_chicago_commodity_blacklisted(self):
+        assert keyword_score("芝加哥玉米期货", "") < -0.3
+
+    def test_us_market_indices_blacklisted(self):
+        assert keyword_score("纳斯达克上涨", "") < 0.0
+
+    def test_promotional_content_blacklisted(self):
+        assert keyword_score("邀请参加直播", "") < 0.0
+
+
+class TestMixedKeywords:
+    """Mixed positive/negative should return the max (positive wins for relevant)."""
+
+    def test_relevant_with_us_mention(self):
+        # "国产替代" should win over "美光" blacklist
+        score = keyword_score("国产替代美光", "")
+        assert score > 0.0
+
+    def test_pure_noise_no_match(self):
+        assert keyword_score("今天天气真好", "") == 0.0
+
+    def test_blacklist_only(self):
+        assert keyword_score("港股美股齐跌", "") < 0.0
+
+    def test_strong_positive_dominates(self):
+        # 1.0 央行 vs -0.5 美股: 央行 should win
+        score = keyword_score("央行降准 美股大涨", "")
+        assert score >= 0.7
+
+
+class TestKeywordDictionarySize:
+    def test_dictionary_has_substantial_coverage(self):
+        from app.news.analyzer import HIGH_IMPACT_KEYWORDS
+        # Was 32, expanded to ~160
+        assert len(HIGH_IMPACT_KEYWORDS) >= 100
+
+    def test_dictionary_has_negative_keywords(self):
+        from app.news.analyzer import HIGH_IMPACT_KEYWORDS
+        negative_count = sum(1 for v in HIGH_IMPACT_KEYWORDS.values() if v < 0)
+        assert negative_count >= 15
+
+    def test_dictionary_has_investment_thesis_keywords(self):
+        from app.news.analyzer import HIGH_IMPACT_KEYWORDS
+        # Core bottleneck theory terms must be in dictionary
+        required = ["卡脖子", "国产替代", "紧缺", "订单", "产能", "满产",
+                    "排产", "扩产", "毛利率", "龙头", "瓶颈", "光模块",
+                    "CPO", "人形机器人", "AI算力"]
+        missing = [w for w in required if w not in HIGH_IMPACT_KEYWORDS]
+        assert not missing, f"Missing required keywords: {missing}"
+
+
+class TestThresholdFiltering:
+    """Test that threshold 0.5 actually filters as expected."""
+
+    def test_threshold_5_passes_strong_news(self):
+        # With threshold 0.5, 央行 should pass
+        assert keyword_score("央行降准", "") >= 0.5
+
+    def test_threshold_5_blocks_generic_news(self):
+        # 无任何关键词应该过不了 0.5
+        assert keyword_score("普通消息", "") < 0.5
+
+    def test_threshold_5_blocks_us_news(self):
+        # 美光 has -0.5, < 0.5 threshold
+        assert keyword_score("美光科技", "") < 0.5

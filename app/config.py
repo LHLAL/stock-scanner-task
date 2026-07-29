@@ -23,7 +23,7 @@ class ClsConfig:
 
 @dataclass
 class NewsFilterConfig:
-    keyword_threshold: float = 0.3
+    keyword_threshold: float = 0.5
     min_confidence_for_notify: float = 0.7
     min_confidence_for_holdings_alert: float = 0.5
 
@@ -172,7 +172,7 @@ def load_config(path: Optional[str] = None) -> AppConfig:
                 off_hours_poll_interval_seconds=data.get("news", {}).get("cls", {}).get("off_hours_poll_interval_seconds", 300),
             ),
             filter=NewsFilterConfig(
-                keyword_threshold=data.get("news", {}).get("filter", {}).get("keyword_threshold", 0.3),
+                keyword_threshold=data.get("news", {}).get("filter", {}).get("keyword_threshold", 0.5),
                 min_confidence_for_notify=data.get("news", {}).get("filter", {}).get("min_confidence_for_notify", 0.7),
                 min_confidence_for_holdings_alert=data.get("news", {}).get("filter", {}).get("min_confidence_for_holdings_alert", 0.5),
             ),
