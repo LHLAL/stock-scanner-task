@@ -9,11 +9,48 @@ class DataSourceConfig:
     enabled: List[str] = field(
         default_factory=lambda: ["tencent", "tdx"]
     )
-    order: List[str] = field(
-        default_factory=lambda: ["tencent", "tdx"]
-    )
     successive_fail_limit: int = 3
     cooldown_seconds: int = 60
+
+
+@dataclass
+class ClsConfig:
+    sign: Optional[str] = None
+    cookie: Optional[str] = None
+    poll_interval_seconds: int = 30
+    off_hours_poll_interval_seconds: int = 300
+
+
+@dataclass
+class NewsFilterConfig:
+    keyword_threshold: float = 0.3
+    min_confidence_for_notify: float = 0.7
+    min_confidence_for_holdings_alert: float = 0.5
+
+
+@dataclass
+class LlmConfig:
+    model: str = "minimax-m2.5:cloud"
+    host: str = "http://localhost:11434"
+    api_key: Optional[str] = None
+    max_per_minute: int = 10
+    cache_ttl_hours: int = 24
+    request_timeout_seconds: int = 30
+
+
+@dataclass
+class SectorConfig:
+    cache_ttl_days: int = 7
+    force_refresh: bool = False
+
+
+@dataclass
+class NewsConfig:
+    enabled: bool = False
+    cls: ClsConfig = field(default_factory=ClsConfig)
+    filter: NewsFilterConfig = field(default_factory=NewsFilterConfig)
+    llm: LlmConfig = field(default_factory=LlmConfig)
+    sector: SectorConfig = field(default_factory=SectorConfig)
 
 
 @dataclass
@@ -44,6 +81,7 @@ class AppConfig:
     tencent_api_template: str = "http://qt.gtimg.cn/q={codes}"
     db_path: str = "price_history.db"
     data_sources: DataSourceConfig = field(default_factory=DataSourceConfig)
+    news: NewsConfig = field(default_factory=NewsConfig)
 
 
 def _get_project_root() -> str:
@@ -121,8 +159,33 @@ def load_config(path: Optional[str] = None) -> AppConfig:
         db_path=data.get("db_path", "price_history.db"),
         data_sources=DataSourceConfig(
             enabled=data.get("data_sources", {}).get("enabled", ["tencent", "tdx"]),
-            order=data.get("data_sources", {}).get("order", ["tencent", "tdx"]),
             successive_fail_limit=data.get("data_sources", {}).get("successive_fail_limit", 3),
             cooldown_seconds=data.get("data_sources", {}).get("cooldown_seconds", 60),
+        ),
+        news=NewsConfig(
+            enabled=data.get("news", {}).get("enabled", False),
+            cls=ClsConfig(
+                sign=data.get("news", {}).get("cls", {}).get("sign"),
+                cookie=data.get("news", {}).get("cls", {}).get("cookie"),
+                poll_interval_seconds=data.get("news", {}).get("cls", {}).get("poll_interval_seconds", 30),
+                off_hours_poll_interval_seconds=data.get("news", {}).get("cls", {}).get("off_hours_poll_interval_seconds", 300),
+            ),
+            filter=NewsFilterConfig(
+                keyword_threshold=data.get("news", {}).get("filter", {}).get("keyword_threshold", 0.3),
+                min_confidence_for_notify=data.get("news", {}).get("filter", {}).get("min_confidence_for_notify", 0.7),
+                min_confidence_for_holdings_alert=data.get("news", {}).get("filter", {}).get("min_confidence_for_holdings_alert", 0.5),
+            ),
+            llm=LlmConfig(
+                model=data.get("news", {}).get("llm", {}).get("model", "minimax-m2.5:cloud"),
+                host=data.get("news", {}).get("llm", {}).get("host", "http://localhost:11434"),
+                api_key=data.get("news", {}).get("llm", {}).get("api_key"),
+                max_per_minute=data.get("news", {}).get("llm", {}).get("max_per_minute", 10),
+                cache_ttl_hours=data.get("news", {}).get("llm", {}).get("cache_ttl_hours", 24),
+                request_timeout_seconds=data.get("news", {}).get("llm", {}).get("request_timeout_seconds", 30),
+            ),
+            sector=SectorConfig(
+                cache_ttl_days=data.get("news", {}).get("sector", {}).get("cache_ttl_days", 7),
+                force_refresh=data.get("news", {}).get("sector", {}).get("force_refresh", False),
+            ),
         ),
     )

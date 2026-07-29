@@ -17,5 +17,31 @@
   "alert_threshold_pct": 2.0,
   "sudden_threshold_pct": 1.0,
   "poll_interval_seconds": 5,
-  "db_path": "price_history.db"
+  "db_path": "price_history.db",
+  "news": {
+    "enabled": true,
+    "cls": {
+      "sign": null,
+      "cookie": null,
+      "poll_interval_seconds": 30,
+      "off_hours_poll_interval_seconds": 300
+    },
+    "filter": {
+      "keyword_threshold": 0.3,
+      "min_confidence_for_notify": 0.7,
+      "min_confidence_for_holdings_alert": 0.5
+    },
+    "llm": {
+      "model": "minimax-m2.5:cloud",
+      "host": "http://localhost:11434",
+      "api_key": null,
+      "max_per_minute": 10,
+      "cache_ttl_hours": 24,
+      "request_timeout_seconds": 30
+    },
+    "sector": {
+      "cache_ttl_days": 7,
+      "force_refresh": false
+    }
+  }
 }

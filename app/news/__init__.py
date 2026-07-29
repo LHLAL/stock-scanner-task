@@ -1,0 +1,1 @@
+"""News intelligence module: CLS fetcher → keyword filter → LLM analysis → sector mapping."""

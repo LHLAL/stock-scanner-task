@@ -14,9 +14,11 @@ from app.multi_fetcher import (
     TencentSource,
     TDXSource,
     HAS_MOOTDX,
+    StockQuote,
 )
-from app.fetcher import StockQuote
 from app.monitor import Alert, PriceMonitor, RiskAlert, is_market_open
+from app.news.monitor import NewsMonitor
+from app.storage import PriceDB
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,10 @@ class StockMenuBarApp(rumps.App):
         if "tencent" in ds_config.enabled:
             sources.append(TencentSource(api_template=config.tencent_api_template))
         if "tdx" in ds_config.enabled and HAS_MOOTDX:
-            sources.append(TDXSource())
+            # mootdx 0.11+ 不返回中文名，由 holdings 提供映射
+            name_map = {h.code: h.name for h in config.holdings}
+            name_map.update({idx.code: idx.name for idx in config.indices})
+            sources.append(TDXSource(name_map=name_map))
         # Fallback to Tencent if no sources configured
         if not sources:
             sources.append(TencentSource(api_template=config.tencent_api_template))
@@ -94,10 +99,31 @@ class StockMenuBarApp(rumps.App):
         self._index_items: Dict[str, rumps.MenuItem] = {}
         self._portfolio_item: rumps.MenuItem = rumps.MenuItem("持仓: 加载中...")
         self._timestamp_item: rumps.MenuItem = rumps.MenuItem("刷新于: --")
+        self._news_item: Optional[rumps.MenuItem] = None
+        self._news_detail_items: List[rumps.MenuItem] = []
+        self._news_lock = threading.Lock()
         self._running = False
         self._heartbeat_count: int = 0
         self._ui_updater = _UIUpdater.alloc().initWithApp_(self)
         self._build_menu()
+
+        self._db = PriceDB(config.db_path)
+        holdings_codes = {h.code for h in config.holdings if h.cost is not None}
+        self._news_monitor: Optional[NewsMonitor] = None
+        if config.news.enabled:
+            try:
+                self._news_monitor = NewsMonitor(
+                    config=config.news,
+                    holdings=holdings_codes,
+                    db=self._db,
+                    on_update=self._on_news_update,
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ 新闻模块初始化失败: {e}")
+                self._news_monitor = None
+
+        self._pending_news: List[dict] = []
+
         logger.info("📊 监控已启动: %d 只持仓, %d 个指数, 刷新间隔 %ds",
                     len(self._config.holdings),
                     len(self._indices_config),
@@ -172,6 +198,14 @@ class StockMenuBarApp(rumps.App):
         self.menu.add(rumps.separator)
         self._timestamp_item = rumps.MenuItem("刷新于: --")
         self.menu.add(self._timestamp_item)
+
+        if self._config.news.enabled:
+            self._news_item = rumps.MenuItem("📰 新闻分析 (暂无)")
+            self.menu.add(self._news_item)
+            placeholder = rumps.MenuItem("  (等待新分析…)")
+            self._news_detail_items.append(placeholder)
+            self._news_item.add(placeholder)
+
         self.menu.add(rumps.separator)
 
         quit_item = rumps.MenuItem("退出")
@@ -276,6 +310,63 @@ class StockMenuBarApp(rumps.App):
             self._monitor.save_history(quotes)
         except Exception as e:
             logger.error(f"Fetch error: {e}")
+
+    def _on_news_update(self, analysis, related, hits_holdings) -> None:
+        """Callback from NewsMonitor (background thread)."""
+        with self._news_lock:
+            self._pending_news.append({
+                "summary": analysis.summary,
+                "direction": analysis.direction,
+                "direction_label": analysis.direction_label,
+                "emoji": analysis.emoji,
+                "confidence": analysis.confidence,
+                "sectors": list(analysis.sectors),
+                "stocks": list(analysis.stocks),
+                "related": list(related),
+                "hits_holdings": bool(hits_holdings),
+                "analyzed_at": analysis.analyzed_at,
+            })
+            self._pending_news = self._pending_news[:20]
+
+    def _refresh_news_menu(self) -> None:
+        """Re-render the news submenu (main thread)."""
+        if not self._news_item:
+            return
+        with self._news_lock:
+            items = list(reversed(self._pending_news))
+
+        try:
+            self._news_item.title = f"📰 新闻分析 ({len(items)})"
+            submenu = self._news_item._menuitem.submenu()
+            for child in list(submenu.itemArray() or []):
+                submenu.removeItem_(child)
+            self._news_detail_items = []
+        except Exception as e:
+            logger.debug(f"news menu rebuild failed: {e}")
+            return
+
+        if not items:
+            placeholder = rumps.MenuItem("  (等待新分析…)")
+            self._news_item.add(placeholder)
+            self._news_detail_items.append(placeholder)
+            return
+
+        holdings_codes = {h.code for h in self._config.holdings}
+        for entry in items[:10]:
+            stars = "🔔" if entry["hits_holdings"] else ("⭐" if entry["confidence"] >= 0.85 else "·")
+            ts = datetime.fromtimestamp(entry["analyzed_at"]).strftime("%H:%M")
+            head = rumps.MenuItem(
+                f"{stars} {entry['emoji']} [{','.join(entry['sectors'][:2])}] {entry['summary'][:32]}"
+            )
+            head.add(rumps.MenuItem(f"方向: {entry['direction_label']}  置信度 {entry['confidence']:.2f}"))
+            if entry["hits_holdings"]:
+                hit_codes = [c for c in entry["related"] if c in holdings_codes]
+                head.add(rumps.MenuItem(f"🔔 命中持仓: {','.join(hit_codes)}"))
+            elif entry["related"]:
+                head.add(rumps.MenuItem(f"相关股: {','.join(entry['related'][:6])}"))
+            head.add(rumps.MenuItem(f"⏱ {ts}"))
+            self._news_item.add(head)
+            self._news_detail_items.append(head)
 
     def _update_ui(self) -> None:
         with self._quotes_lock:
@@ -419,6 +510,8 @@ class StockMenuBarApp(rumps.App):
         now = datetime.now().strftime("%H:%M:%S")
         self._timestamp_item.title = f"刷新于: {now}"
 
+        self._refresh_news_menu()
+
     def _refresh_loop(self) -> None:
         while self._running:
             self._do_fetch()
@@ -439,4 +532,11 @@ class StockMenuBarApp(rumps.App):
         self._update_ui()
         self._running = True
         threading.Thread(target=self._refresh_loop, daemon=True).start()
+        if self._news_monitor:
+            self._news_monitor.start()
+            health = self._news_monitor.health_check()
+            logger.info(
+                "📰 新闻模块: cls=%s llm=%s sector=%s",
+                health["cls"], health["llm"], health["sector"],
+            )
         super().run()
