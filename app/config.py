@@ -52,7 +52,7 @@ class SectorConfig:
 @dataclass
 class DigestConfig:
     enabled: bool = False
-    days_back: int = 3                       # 拉最近 3 天
+    days_back: int = 1                       # 1 = today only; >1 increases prompt size & time
     poll_interval_minutes: int = 120         # 2 小时一次
     min_market_confidence_for_notify: float = 0.7
     min_holdings_confidence_for_notify: float = 0.6

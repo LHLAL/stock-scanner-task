@@ -41,7 +41,7 @@ CLS_DIGEST_HEADERS = {
 
 NO_PROXY = {"http": "", "https": ""}
 
-DIGEST_PROMPT = """你是 A 股市场资深分析师。以下是最近 3 天财联社的早间/午间/晚间新闻精选汇总。
+DIGEST_PROMPT = """你是 A 股市场资深分析师。以下是最近 1 天财联社的早间/午间/晚间新闻精选汇总。
 请分析这些新闻对【当前 A 股市场、特定行业板块、我的持仓股】的影响。
 
 【我的持仓股】
@@ -278,7 +278,7 @@ class DigestAnalyzer:
             f"- {s.code} {s.name}" for s in holdings if s.code
         ) or "（无持仓）"
         digests_text = "\n\n".join(
-            f"【{d.digest_date} {d.digest_type}】{d.title}\n{d.content[:2000]}"
+            f"【{d.digest_type}】{d.title}\n{d.content[:800]}"
             for d in digests
         )
         prompt = DIGEST_PROMPT.format(

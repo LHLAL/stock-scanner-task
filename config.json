@@ -36,12 +36,12 @@
       "max_notifications_per_day": 20
     },
     "llm": {
-      "model": "minimax-m2.5:cloud",
+      "model": "gpt-oss:20b-cloud",
       "host": "http://localhost:11434",
       "api_key": null,
       "max_per_minute": 12,
       "cache_ttl_hours": 24,
-      "request_timeout_seconds": 30,
+      "request_timeout_seconds": 60,
       "daily_limit": 1000
     },
     "sector": {
@@ -50,7 +50,7 @@
     },
     "digest": {
       "enabled": true,
-      "days_back": 3,
+      "days_back": 1,
       "poll_interval_minutes": 120,
       "min_market_confidence_for_notify": 0.7,
       "min_holdings_confidence_for_notify": 0.6,
