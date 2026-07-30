@@ -1,4 +1,5 @@
 """Tests for app.news.monitor: NewsMonitor._tick pipeline (mocked fetcher/analyzer)."""
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -267,6 +268,40 @@ class TestNewsMonitorStartStop:
         setup_monitor.stop()
 
         assert setup_monitor._running is False
+
+    def test_start_launches_digest_thread(self, setup_monitor):
+        """When digest enabled, start() should spawn a NewsMonitor-Digest thread."""
+        assert setup_monitor._digest_fetcher is not None
+        # Patch the digest cycle to count invocations and short-circuit
+        cycle_count = {"n": 0}
+
+        def fake_cycle():
+            cycle_count["n"] += 1
+            if cycle_count["n"] >= 2:
+                setup_monitor.stop()
+        with patch.object(setup_monitor, "run_digest_cycle", side_effect=fake_cycle):
+            with patch("app.news.monitor.is_market_open", return_value=True):
+                # Force a short poll interval
+                setup_monitor._config.digest.poll_interval_minutes = 0
+                setup_monitor.start()
+                import time
+                time.sleep(0.5)
+        assert cycle_count["n"] >= 2
+
+    def test_start_skips_digest_thread_when_disabled(self, setup_monitor):
+        """When digest is not configured, no digest thread should be started."""
+        setup_monitor.stop()
+        setup_monitor._running = False
+        # Disable digest
+        setup_monitor._digest_fetcher = None
+        setup_monitor._digest_analyzer = None
+        # Patch _digest_loop to track if it was called
+        with patch.object(setup_monitor, "_digest_loop") as fake_digest_loop:
+            setup_monitor.start()
+            import time
+            time.sleep(0.2)
+            fake_digest_loop.assert_not_called()
+        setup_monitor.stop()
 
 class TestBottleneckNotify:
     def test_kneck_with_low_confidence_does_not_notify(self, setup_monitor, temp_db_path):

@@ -87,6 +87,17 @@ class NewsMonitor:
             return
         self._running = True
         threading.Thread(target=self._loop, daemon=True, name="NewsMonitor").start()
+        if self._digest_fetcher and self._digest_analyzer:
+            threading.Thread(
+                target=self._digest_loop,
+                daemon=True,
+                name="NewsMonitor-Digest",
+            ).start()
+            interval = self._config.digest.poll_interval_minutes
+            logger.info(
+                "[NewsMonitor] digest cycle started (every %d min, days_back=%d)",
+                interval, self._config.digest.days_back,
+            )
         logger.info("[NewsMonitor] started")
 
     def stop(self) -> None:
@@ -148,6 +159,21 @@ class NewsMonitor:
             except Exception as e:
                 logger.exception(f"[NewsMonitor] tick failed: {e}")
             time.sleep(self._current_interval())
+
+    def _digest_loop(self) -> None:
+        """Background loop: run_digest_cycle() every N minutes during market hours.
+
+        Off-hours: sleep 30 min between attempts (cheap check, no LLM cost since
+        run_digest_cycle short-circuits on no data or off-hours digests).
+        """
+        while self._running:
+            try:
+                self.run_digest_cycle()
+            except Exception as e:
+                logger.exception(f"[NewsMonitor] digest cycle failed: {e}")
+            interval = self._config.digest.poll_interval_minutes
+            sleep_sec = interval * 60 if is_market_open() else 1800
+            time.sleep(sleep_sec)
 
     def _tick(self) -> None:
         raw_news = self._fetcher.fetch(max_items=30)
