@@ -71,6 +71,10 @@ class NewsMonitor:
         self._notif_count: int = 0
         self._notif_count_date: date = date.today()
 
+        self._consecutive_llm_failures: int = 0
+        self._llm_circuit_open: bool = False
+        self._llm_circuit_open_until: float = 0.0
+
     def health_check(self) -> dict:
         """Return status of each component."""
         cls_ok = True
@@ -109,6 +113,18 @@ class NewsMonitor:
             if is_market_open()
             else self._config.cls.off_hours_poll_interval_seconds
         )
+
+    def _record_llm_failure(self) -> None:
+        """Track consecutive LLM failures; open circuit after 3 in a row."""
+        self._consecutive_llm_failures += 1
+        if self._consecutive_llm_failures >= 3:
+            cooldown = 5 * 60
+            self._llm_circuit_open = True
+            self._llm_circuit_open_until = time.time() + cooldown
+            logger.warning(
+                f"[NewsMonitor] LLM circuit OPEN after {self._consecutive_llm_failures} failures, "
+                f"cooldown 5 min"
+            )
 
     def _check_daily_limit(self) -> bool:
         """Reset counter on date change; warn at 90%; refuse at 100%."""
@@ -197,11 +213,21 @@ class NewsMonitor:
             if not self._check_daily_limit():
                 logger.debug(f"[NewsMonitor] daily limit hit, skipping LLM for {news.hash}")
                 continue
+            if self._llm_circuit_open:
+                if time.time() < self._llm_circuit_open_until:
+                    logger.debug(
+                        f"[NewsMonitor] LLM circuit open, skip {news.hash}"
+                    )
+                    continue
+                self._llm_circuit_open = False
+                logger.info("[NewsMonitor] LLM circuit half-open, retrying")
             analysis = self._analyzer.analyze(news)
-            self._daily_count += 1
             if analysis is None:
+                self._record_llm_failure()
                 logger.debug(f"[NewsMonitor] LLM failed for {news.hash}")
                 continue
+            self._consecutive_llm_failures = 0
+            self._daily_count += 1
 
             if analysis.confidence < self._config.filter.min_save_confidence:
                 logger.debug(
@@ -368,9 +394,9 @@ class NewsMonitor:
 
         holdings = [Stock(code=c, name="") for c in self._holdings]
         analysis = self._digest_analyzer.analyze(recent, holdings)
-        self._daily_count += 1
         if analysis is None:
             return None
+        self._daily_count += 1
 
         logger.info(
             f"[NewsMonitor] digest analysis: {len(recent)} digests, "

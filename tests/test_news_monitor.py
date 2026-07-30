@@ -1,5 +1,6 @@
 """Tests for app.news.monitor: NewsMonitor._tick pipeline (mocked fetcher/analyzer)."""
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -467,12 +468,13 @@ class TestDailyLimit:
         assert setup_monitor._daily_count == 0
         assert setup_monitor._daily_limit_warned is False
 
-    def test_llm_failure_does_not_increment(self, setup_monitor):
+    def test_llm_failure_does_not_increment_daily_count(self, setup_monitor):
+        # Failed LLM calls must NOT consume the daily quota (bug fix)
         setup_monitor._fetcher.fetch.return_value = [_make_news()]
         setup_monitor._analyzer.analyze.return_value = None
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
-        assert setup_monitor._daily_count == 1
+        assert setup_monitor._daily_count == 0
 
 
 class TestTieredNotificationGating:
@@ -849,3 +851,60 @@ def _make_news_digest(title, ctime, digest_type="morning", content="测试内容
         id=1, title=title, digest_type=digest_type,
         digest_date=_parse_digest_date(ctime), ctime=ctime, content=content,
     )
+
+
+class TestLLMFailureHandling:
+    """LLM failure: should NOT consume daily quota, should open circuit after 3 fails."""
+
+    def test_failed_llm_does_not_increment_daily_count(self, setup_monitor):
+        news = _make_news()
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = None  # LLM failed
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+        # failed call should NOT count
+        assert setup_monitor._daily_count == 0
+
+    def test_successful_llm_increments_daily_count(self, setup_monitor):
+        news = _make_news()
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = _make_analysis()
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+        assert setup_monitor._daily_count == 1
+
+    def test_consecutive_failures_open_circuit(self, setup_monitor):
+        setup_monitor._record_llm_failure()
+        setup_monitor._record_llm_failure()
+        assert setup_monitor._llm_circuit_open is False
+        setup_monitor._record_llm_failure()
+        assert setup_monitor._llm_circuit_open is True
+        assert setup_monitor._llm_circuit_open_until > time.time()
+
+    def test_circuit_open_skips_llm(self, setup_monitor):
+        import time as time_mod
+        news = _make_news()
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = None
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        # Manually open circuit
+        setup_monitor._llm_circuit_open = True
+        setup_monitor._llm_circuit_open_until = time_mod.time() + 300
+        setup_monitor._tick()
+        # analyze should not be called
+        setup_monitor._analyzer.analyze.assert_not_called()
+        # No failure recorded (skipped before analyze)
+        assert setup_monitor._consecutive_llm_failures == 0
+
+    def test_successful_call_resets_failure_counter(self, setup_monitor):
+        setup_monitor._consecutive_llm_failures = 2
+        news = _make_news()
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = _make_analysis()
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+        setup_monitor._tick()
+        assert setup_monitor._consecutive_llm_failures == 0

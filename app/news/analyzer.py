@@ -184,7 +184,7 @@ class OllamaAnalyzer:
             r = requests.get(
                 f"{self._host}/api/tags",
                 headers=self._headers(),
-                timeout=3,
+                timeout=5,
             )
             r.raise_for_status()
             models = [m.get("name", "") for m in r.json().get("models", [])]
@@ -194,6 +194,11 @@ class OllamaAnalyzer:
                     f"[OllamaAnalyzer] model {self._model} not in: {models[:5]}"
                 )
             return available
+        except requests.RequestException as e:
+            logger.warning(
+                f"[OllamaAnalyzer] daemon unreachable at {self._host}: {e}"
+            )
+            return False
         except Exception as e:
             logger.debug(f"[OllamaAnalyzer] health check failed: {e}")
             return False
