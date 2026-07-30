@@ -27,6 +27,7 @@ def _make_analysis(hash="h1", sectors=None, stocks=None, direction="bullish", co
 
 
 def _make_news_config(**overrides):
+    from app.config import DigestConfig
     cfg = NewsConfig(
         enabled=True,
         cls=ClsConfig(sign=None, cookie=None,
@@ -39,10 +40,15 @@ def _make_news_config(**overrides):
             bottleneck_confidence_floor=0.65,
             max_notifications_per_day=20,
         ),
-        llm=LlmConfig(model="test:model", host="http://localhost:11434",
-                      api_key=None, max_per_minute=10,
-                      cache_ttl_hours=24, request_timeout_seconds=30),
-    )
+            llm=LlmConfig(model="test:model", host="http://localhost:11434",
+                          api_key=None, max_per_minute=10,
+                          cache_ttl_hours=24, request_timeout_seconds=30),
+            digest=DigestConfig(enabled=True, days_back=3,
+                                poll_interval_minutes=120,
+                                min_market_confidence_for_notify=0.7,
+                                min_holdings_confidence_for_notify=0.6,
+                                sign=None, cookie=None),
+        )
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg
@@ -702,3 +708,109 @@ class TestMinSaveConfidence:
         setup_monitor._tick()
 
         assert setup_monitor._daily_count == 1
+
+
+class TestDigestCycle:
+    """NewsMonitor.run_digest_cycle() integration."""
+
+    def test_digest_disabled_returns_none(self, setup_monitor):
+        from app.news.digest import DigestFetcher
+        setup_monitor._config.digest.enabled = False
+        setup_monitor._digest_fetcher = None  # forced to None when disabled
+        assert setup_monitor._digest_fetcher is None
+
+    def test_digest_fetcher_none_returns_none(self, setup_monitor):
+        setup_monitor._digest_fetcher = None
+        setup_monitor._digest_analyzer = None
+        assert setup_monitor.run_digest_cycle() is None
+
+    def test_digest_no_news_returns_none(self, setup_monitor):
+        with patch.object(setup_monitor._digest_fetcher, "fetch", return_value=[]):
+            assert setup_monitor.run_digest_cycle() is None
+
+    def test_digest_filters_old_news(self, setup_monitor):
+        from datetime import datetime, timezone, timedelta
+        old_ctime = int((datetime.now(tz=timezone(timedelta(hours=8))).timestamp() - 10 * 86400))
+        old = _make_news_digest(title="旧新闻精选", ctime=old_ctime, digest_type="morning")
+        with patch.object(setup_monitor._digest_fetcher, "fetch", return_value=[old]):
+            assert setup_monitor.run_digest_cycle() is None
+
+    def test_digest_full_cycle_returns_analysis(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        from datetime import datetime, timezone, timedelta
+        now = int(datetime.now(tz=timezone(timedelta(hours=8))).timestamp())
+        d1 = _make_news_digest(title="财联社7月30日早间新闻精选", ctime=now - 3600, digest_type="morning")
+        d2 = _make_news_digest(title="财联社7月30日午间新闻精选", ctime=now - 1800, digest_type="noon")
+        with patch.object(setup_monitor._digest_fetcher, "fetch", return_value=[d1, d2]):
+            with patch.object(setup_monitor._digest_analyzer, "analyze") as mock_analyze:
+                mock_analyze.return_value = DigestAnalysis(
+                    digest_hashes=["h1", "h2"],
+                    summary="测试摘要",
+                    market_sentiment="bullish",
+                    market_confidence=0.8,
+                )
+                result = setup_monitor.run_digest_cycle()
+        assert result is not None
+        assert result.market_sentiment == "bullish"
+        assert setup_monitor._daily_count == 1
+
+    def test_digest_should_notify_high_market_confidence(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        a = DigestAnalysis(
+            digest_hashes=[], summary="", market_sentiment="bullish",
+            market_confidence=0.8,
+        )
+        assert setup_monitor._should_notify_digest(a) is True
+
+    def test_digest_should_notify_low_confidence(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        a = DigestAnalysis(
+            digest_hashes=[], summary="", market_sentiment="bullish",
+            market_confidence=0.4,
+        )
+        assert setup_monitor._should_notify_digest(a) is False
+
+    def test_digest_should_notify_holdings_impact(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        a = DigestAnalysis(
+            digest_hashes=[], summary="", market_sentiment="neutral",
+            market_confidence=0.8,    # pass market threshold
+            holdings_impacts=[{"code": "sh601398", "name": "工商银行",
+                               "impact": "positive", "confidence": 0.7}],
+        )
+        assert setup_monitor._should_notify_digest(a) is True
+
+    def test_digest_should_notify_holdings_neutral_no(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        a = DigestAnalysis(
+            digest_hashes=[], summary="", market_sentiment="neutral",
+            market_confidence=0.5,
+            holdings_impacts=[{"code": "sh601398", "name": "工商银行",
+                               "impact": "neutral", "confidence": 0.7}],
+        )
+        assert setup_monitor._should_notify_digest(a) is False
+
+    def test_digest_daily_cap_blocks_notification(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        setup_monitor._notif_count = 100
+        a = DigestAnalysis(
+            digest_hashes=[], summary="", market_sentiment="bullish",
+            market_confidence=0.8,
+        )
+        assert setup_monitor._should_notify_digest(a) is False
+
+    def test_digest_volatile_sentiment_notifies(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        a = DigestAnalysis(
+            digest_hashes=[], summary="", market_sentiment="volatile",
+            market_confidence=0.75,
+        )
+        assert setup_monitor._should_notify_digest(a) is True
+
+
+def _make_news_digest(title, ctime, digest_type="morning", content="测试内容"):
+    from app.news.digest import Digest, _parse_digest_date
+    return Digest(
+        id=1, title=title, digest_type=digest_type,
+        digest_date=_parse_digest_date(ctime), ctime=ctime, content=content,
+    )

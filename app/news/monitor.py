@@ -2,14 +2,15 @@
 import logging
 import threading
 import time
-from datetime import date
-from typing import List, Set
+from datetime import date, datetime, timedelta, timezone
+from typing import List, Optional, Set
 
 import rumps
 
 from app.config import NewsConfig
 from app.monitor import is_market_open
 from app.news.analyzer import OllamaAnalyzer, TokenBucket, keyword_score
+from app.news.digest import Digest, DigestAnalysis, DigestAnalyzer, DigestFetcher
 from app.news.fetcher import ClsFetcher
 from app.news.models import NewsAnalysis, Stock
 from app.news.sector import SectorMapper
@@ -45,6 +46,19 @@ class NewsMonitor:
         )
         self._sector_mapper = SectorMapper()
         self._bucket = TokenBucket(rate_per_minute=config.llm.max_per_minute)
+
+        self._digest_fetcher = None
+        self._digest_analyzer = None
+        self._digest_running = False
+        if config.digest.enabled:
+            try:
+                self._digest_fetcher = DigestFetcher(
+                    sign=config.digest.sign,
+                    cookie=config.digest.cookie,
+                )
+                self._digest_analyzer = DigestAnalyzer(self._analyzer)
+            except Exception as e:
+                logger.warning(f"⚠️ Digest 模块初始化失败: {e}")
 
         self._running = False
         self._llm_available = True
@@ -297,3 +311,100 @@ class NewsMonitor:
         except Exception as e:
             logger.debug(f"[NewsMonitor] notification failed: {e}")
             return False
+
+    def run_digest_cycle(self) -> Optional[DigestAnalysis]:
+        """Fetch recent digests, run LLM impact analysis, notify on signal.
+
+        Returns the DigestAnalysis (or None on failure) for menu/UI use.
+        """
+        if not self._digest_fetcher or not self._digest_analyzer:
+            logger.debug("[NewsMonitor] digest not configured, skipping")
+            return None
+
+        digests = self._digest_fetcher.fetch()
+        if not digests:
+            return None
+
+        # Filter to last N days
+        cfg = self._config.digest
+        cutoff = time.time() - cfg.days_back * 86400
+        recent = [d for d in digests if d.ctime >= cutoff]
+        if not recent:
+            return None
+
+        # Sort by date asc (oldest first) so LLM reads chronologically
+        recent.sort(key=lambda d: d.ctime)
+
+        # LLM analysis (counts against daily limit too)
+        self._bucket.acquire()
+        if not self._check_daily_limit():
+            return None
+
+        holdings = [Stock(code=c, name="") for c in self._holdings]
+        analysis = self._digest_analyzer.analyze(recent, holdings)
+        self._daily_count += 1
+        if analysis is None:
+            return None
+
+        logger.info(
+            f"[NewsMonitor] digest analysis: {len(recent)} digests, "
+            f"sentiment={analysis.market_sentiment} "
+            f"conf={analysis.market_confidence:.2f} "
+            f"holdings_impacts={len(analysis.holdings_impacts)}"
+        )
+
+        if self._should_notify_digest(analysis):
+            self._notify_digest(analysis, recent)
+        return analysis
+
+    def _should_notify_digest(self, analysis: DigestAnalysis) -> bool:
+        cfg = self._config.digest
+        if self._notif_count >= self._config.filter.max_notifications_per_day:
+            return False
+        if analysis.market_confidence < cfg.min_market_confidence_for_notify:
+            return False
+        if analysis.has_holdings_impact:
+            strongest = analysis.strongest_holdings_impact
+            if strongest and strongest.get("confidence", 0) >= cfg.min_holdings_confidence_for_notify:
+                return True
+        if analysis.market_sentiment in ("bullish", "bearish", "volatile"):
+            return True
+        return False
+
+    def _notify_digest(self, analysis: DigestAnalysis, digests: List[Digest]) -> None:
+        title = f"📊 每日精选 ({digests[0].digest_date} ~ {digests[-1].digest_date})"
+        sentiment_emoji = {
+            "bullish": "🟢", "bearish": "🔴",
+            "neutral": "⚪", "volatile": "🟡",
+        }.get(analysis.market_sentiment, "⚪")
+        subtitle = f"{sentiment_emoji} {analysis.market_sentiment}  置信度 {analysis.market_confidence:.2f}"
+        message = analysis.summary
+        if analysis.holdings_impacts:
+            lines = []
+            for h in analysis.holdings_impacts[:5]:
+                if not isinstance(h, dict):
+                    continue
+                code = h.get("code", "")
+                name = h.get("name", "")
+                impact = h.get("impact", "")
+                conf = h.get("confidence", 0)
+                reason = h.get("reason", "")
+                icon = "🟢" if impact == "positive" else ("🔴" if impact == "negative" else "⚪")
+                disp = (name + f"({code})") if name else code
+                lines.append(f"{icon} {disp} ({conf:.2f}): {reason}")
+            message += "\n\n持仓影响:\n" + "\n".join(lines)
+        if analysis.sector_impacts:
+            lines = []
+            for s in analysis.sector_impacts[:3]:
+                if not isinstance(s, dict):
+                    continue
+                direction_emoji = {"bullish": "🟢", "bearish": "🔴"}.get(s.get("direction", ""), "⚪")
+                lines.append(f"{direction_emoji} {s.get('sector', '')}: {s.get('reason', '')}")
+            message += "\n\n板块:\n" + "\n".join(lines)
+        if analysis.key_events:
+            message += "\n\n要闻:\n" + " | ".join(analysis.key_events[:3])
+        try:
+            rumps.notification(title=title, subtitle=subtitle, message=message)
+            self._notif_count += 1
+        except Exception as e:
+            logger.debug(f"[NewsMonitor] digest notification failed: {e}")

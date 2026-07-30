@@ -50,12 +50,24 @@ class SectorConfig:
 
 
 @dataclass
+class DigestConfig:
+    enabled: bool = False
+    days_back: int = 3                       # 拉最近 3 天
+    poll_interval_minutes: int = 120         # 2 小时一次
+    min_market_confidence_for_notify: float = 0.7
+    min_holdings_confidence_for_notify: float = 0.6
+    sign: Optional[str] = None
+    cookie: Optional[str] = None
+
+
+@dataclass
 class NewsConfig:
     enabled: bool = False
     cls: ClsConfig = field(default_factory=ClsConfig)
     filter: NewsFilterConfig = field(default_factory=NewsFilterConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     sector: SectorConfig = field(default_factory=SectorConfig)
+    digest: DigestConfig = field(default_factory=DigestConfig)
 
 
 @dataclass
@@ -196,6 +208,15 @@ def load_config(path: Optional[str] = None) -> AppConfig:
             sector=SectorConfig(
                 cache_ttl_days=data.get("news", {}).get("sector", {}).get("cache_ttl_days", 7),
                 force_refresh=data.get("news", {}).get("sector", {}).get("force_refresh", False),
+            ),
+            digest=DigestConfig(
+                enabled=data.get("news", {}).get("digest", {}).get("enabled", False),
+                days_back=data.get("news", {}).get("digest", {}).get("days_back", 3),
+                poll_interval_minutes=data.get("news", {}).get("digest", {}).get("poll_interval_minutes", 120),
+                min_market_confidence_for_notify=data.get("news", {}).get("digest", {}).get("min_market_confidence_for_notify", 0.7),
+                min_holdings_confidence_for_notify=data.get("news", {}).get("digest", {}).get("min_holdings_confidence_for_notify", 0.6),
+                sign=data.get("news", {}).get("digest", {}).get("sign"),
+                cookie=data.get("news", {}).get("digest", {}).get("cookie"),
             ),
         ),
     )

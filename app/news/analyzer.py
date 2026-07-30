@@ -213,16 +213,39 @@ class OllamaAnalyzer:
             "format": "json",
             "options": {"temperature": 0.1},
         }
+        raw = self._call_raw_with_payload(prompt, payload)
+        if raw is None:
+            return None
+        try:
+            analysis = NewsAnalysis.from_json(news.hash, raw)
+        except (ValueError, KeyError) as e:
+            logger.warning(f"[OllamaAnalyzer] parse failed: {e}")
+            return None
+        logger.debug(f"[OllamaAnalyzer] {self._model} for {news.hash}")
+        return analysis
+
+    def _call_raw(self, prompt: str) -> Optional[str]:
+        """Lower-level: send prompt, return raw response string."""
+        payload = {
+            "model": self._model,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.1},
+        }
+        return self._call_raw_with_payload(prompt, payload)
+
+    def _call_raw_with_payload(self, prompt: str, payload: dict) -> Optional[str]:
+        if self._auth_failed:
+            return None
         try:
             with self._lock:
-                t0 = time.time()
                 resp = requests.post(
                     f"{self._host}/api/generate",
                     headers=self._headers(),
                     json=payload,
                     timeout=self._timeout,
                 )
-            elapsed = time.time() - t0
             if resp.status_code in (401, 403):
                 self._auth_failed = True
                 logger.error(
@@ -230,11 +253,7 @@ class OllamaAnalyzer:
                 )
                 return None
             resp.raise_for_status()
-            raw = resp.json().get("response", "")
-            logger.debug(
-                f"[OllamaAnalyzer] {self._model} took {elapsed:.1f}s for {news.hash}"
-            )
-            return NewsAnalysis.from_json(news.hash, raw)
+            return resp.json().get("response", "")
         except requests.RequestException as e:
             logger.warning(f"[OllamaAnalyzer] request failed: {e}")
             return None

@@ -10,6 +10,7 @@ macOS 状态栏实时看盘工具。在菜单栏显示 A 股持仓股的实时�
 - **轮询可调**：交易时段 5 秒 / 收盘后 60 秒；`poll_interval_seconds` 自由配置
 - **持仓 CRUD**：菜单内置「添加 / 编辑 / 删除」对话框，编辑后自动写回 `config.json`
 - **📰 新闻情报**：财联社电报 → 关键词预筛 → 本地 Ollama LLM 分析（含卡脖子瓶颈三指标/四柱/产业趋势） → 板块/个股关联 → 命中持仓或瓶颈信号弹通知（详见下方）
+- **📊 每日精选**：财联社 `/api/csw` 早间/午间/晚间新闻精选 → 拉最近 3 天 → LLM 一次性分析对【市场/板块/持仓】的整体影响 → 高置信度或持仓命中时弹通知（默认 2 小时一次）
 - **多种告警**（全部 30 分钟冷却，避免骚扰）：
   - **阈值告警**：`change_pct` 超过 `alert_threshold_pct` 时弹窗
   - **异动检测**：与近 3 轮均值偏差 > `sudden_threshold_pct` 时弹窗
@@ -215,13 +216,16 @@ echo 'export OLLAMA_API_KEY=your_key_here' >> ~/.zshrc
 
 ```json
 {
-  "news": {
+   "news": {
     "enabled": true,
     "cls": {"sign": null, "cookie": null, "poll_interval_seconds": 20, "off_hours_poll_interval_seconds": 600},
     "filter": {"keyword_threshold": 0.5, "min_confidence_for_notify": 0.8, "min_confidence_for_holdings_alert": 0.65, "bottleneck_confidence_floor": 0.65, "max_notifications_per_day": 20},
     "llm": {"model": "minimax-m2.5:cloud", "host": "http://localhost:11434", "api_key": null,
             "max_per_minute": 12, "cache_ttl_hours": 24, "request_timeout_seconds": 30, "daily_limit": 1000},
-    "sector": {"cache_ttl_days": 7, "force_refresh": false}
+    "sector": {"cache_ttl_days": 7, "force_refresh": false},
+    "digest": {"enabled": true, "days_back": 3, "poll_interval_minutes": 120,
+               "min_market_confidence_for_notify": 0.7, "min_holdings_confidence_for_notify": 0.6,
+               "sign": null, "cookie": null}
   }
 }
 ```

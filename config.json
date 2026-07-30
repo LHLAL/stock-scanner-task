@@ -28,7 +28,7 @@
     },
 "filter": {
       "keyword_threshold": 0.5,
-      "min_save_confidence": 0.25,
+      "min_save_confidence": 0.7,
       "min_useful_confidence": 0.5,
       "min_confidence_for_notify": 0.8,
       "min_confidence_for_holdings_alert": 0.65,
@@ -45,8 +45,17 @@
       "daily_limit": 1000
     },
     "sector": {
-      "cache_ttl_days": 7,
+      "cache_ttl_days": 4,
       "force_refresh": false
+    },
+    "digest": {
+      "enabled": true,
+      "days_back": 3,
+      "poll_interval_minutes": 120,
+      "min_market_confidence_for_notify": 0.7,
+      "min_holdings_confidence_for_notify": 0.6,
+      "sign": "b02d8f7bc4c45eeb3e86904203597da2",
+      "cookie": null
     }
   }
 }
