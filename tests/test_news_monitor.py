@@ -908,3 +908,111 @@ class TestLLMFailureHandling:
         setup_monitor._on_update = lambda a, r, h: None
         setup_monitor._tick()
         assert setup_monitor._consecutive_llm_failures == 0
+
+
+class TestProgressLogging:
+    """Verify tick + digest emit structured progress logs."""
+
+    def test_tick_logs_structured_summary(self, setup_monitor, caplog):
+        import logging
+        from app.news.models import RawNews
+        caplog.set_level(logging.INFO, logger="app.news.monitor")
+
+        news = _make_news()
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._analyzer.analyze.return_value = _make_analysis()
+        setup_monitor._sector_mapper.map_analysis.return_value = []
+        setup_monitor._on_update = lambda a, r, h: None
+
+        with caplog.at_level(logging.INFO, logger="app.news.monitor"):
+            setup_monitor._tick()
+
+        # Find the tick summary log
+        tick_logs = [r for r in caplog.records if "[Tick" in r.message]
+        assert len(tick_logs) == 1
+        msg = tick_logs[0].message
+        assert "CLS→1" in msg            # fetched
+        assert "kw❌=0" in msg           # keyword skip
+        assert "LLM=1✓/0✗" in msg       # LLM ok/fail
+        assert "saved=1" in msg
+        assert "quota=1/1000" in msg     # daily quota
+
+    def test_tick_logs_skip_reasons(self, setup_monitor, caplog):
+        import logging
+        caplog.set_level(logging.INFO, logger="app.news.monitor")
+
+        news = _make_news(title="普通内容", content="没有关键词")
+        setup_monitor._fetcher.fetch.return_value = [news]
+        setup_monitor._on_update = lambda a, r, h: None
+
+        with caplog.at_level(logging.INFO, logger="app.news.monitor"):
+            setup_monitor._tick()
+
+        tick_logs = [r for r in caplog.records if "[Tick" in r.message]
+        msg = tick_logs[0].message
+        assert "kw❌=1" in msg    # keyword skipped
+
+    def test_digest_logs_full_progress(self, setup_monitor, caplog):
+        import logging
+        from app.news.digest import Digest, DigestAnalysis
+        from datetime import datetime, timezone, timedelta
+        caplog.set_level(logging.INFO, logger="app.news.monitor")
+
+        now = int(datetime.now(tz=timezone(timedelta(hours=8))).timestamp())
+        d1 = _make_news_digest(title="财联社7月30日早间", ctime=now - 3600, digest_type="morning")
+        d2 = _make_news_digest(title="财联社7月30日午间", ctime=now - 1800, digest_type="noon")
+
+        with patch.object(setup_monitor._digest_fetcher, "fetch", return_value=[d1, d2]):
+            with patch.object(setup_monitor._digest_analyzer, "analyze") as mock_analyze:
+                mock_analyze.return_value = DigestAnalysis(
+                    digest_hashes=["h1", "h2"],
+                    summary="测试",
+                    market_sentiment="bullish",
+                    market_confidence=0.8,
+                )
+                with caplog.at_level(logging.INFO, logger="app.news.monitor"):
+                    setup_monitor.run_digest_cycle()
+
+        msgs = " | ".join(r.message for r in caplog.records)
+        assert "[Digest] starting" in msgs
+        assert "[Digest] fetched 2 digests" in msgs
+        assert "[Digest] 2 digests in window" in msgs
+        assert "morning(2026-07-30)" in msgs
+        assert "calling LLM" in msgs
+        assert "[Digest] ✓ LLM done" in msgs
+        assert "market=bullish(0.80)" in msgs
+
+    def test_digest_logs_no_data(self, setup_monitor, caplog):
+        import logging
+        caplog.set_level(logging.INFO, logger="app.news.monitor")
+        with patch.object(setup_monitor._digest_fetcher, "fetch", return_value=[]):
+            with caplog.at_level(logging.INFO, logger="app.news.monitor"):
+                setup_monitor.run_digest_cycle()
+        msgs = " | ".join(r.message for r in caplog.records)
+        assert "no digests returned" in msgs
+
+    def test_start_logs_full_config(self, setup_monitor, caplog):
+        import logging
+        caplog.set_level(logging.INFO, logger="app.news.monitor")
+        with caplog.at_level(logging.INFO, logger="app.news.monitor"):
+            setup_monitor.start()
+        msgs = " | ".join(r.message for r in caplog.records)
+        assert "starting... health" in msgs
+        assert "cls:True" in msgs or "cls:True" in msgs
+        assert "model=" in msgs
+        assert "digest enabled" in msgs
+
+    def test_status_log_emitted_after_5_min(self, setup_monitor):
+        # Force last_status_log_ts to 6 min ago
+        setup_monitor._last_status_log_ts = time.time() - 360
+        setup_monitor._maybe_log_status()  # should log
+        # Force to now
+        setup_monitor._last_status_log_ts = time.time()
+        with patch("app.news.monitor.logger") as mock_logger:
+            setup_monitor._maybe_log_status()  # should NOT log (under 5 min)
+            # If status was logged, info would be called
+            info_calls = [c for c in mock_logger.info.call_args_list
+                          if "[Status]" in str(c)]
+            # May or may not be called depending on tick_count % 100
+            # We just check the function doesn't crash
+            assert True

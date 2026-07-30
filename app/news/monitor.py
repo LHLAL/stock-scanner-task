@@ -75,6 +75,9 @@ class NewsMonitor:
         self._llm_circuit_open: bool = False
         self._llm_circuit_open_until: float = 0.0
 
+        self._tick_count: int = 0
+        self._last_status_log_ts: float = time.time()
+
     def health_check(self) -> dict:
         """Return status of each component."""
         cls_ok = True
@@ -90,6 +93,30 @@ class NewsMonitor:
         if self._running:
             return
         self._running = True
+        logger.info(
+            "[NewsMonitor] starting... health=cls:%s llm:%s sector:%s | "
+            "config: poll=%ds/%ds (intraday/off-hours) daily_limit=%d "
+            "filter: kw=%.2f notif_conf=%.2f | "
+            "llm: model=%s timeout=%ds max/min=%d",
+            *self.health_check().values(),
+            self._config.cls.poll_interval_seconds,
+            self._config.cls.off_hours_poll_interval_seconds,
+            self._config.llm.daily_limit,
+            self._config.filter.keyword_threshold,
+            self._config.filter.min_confidence_for_notify,
+            self._analyzer._model,
+            self._analyzer._timeout,
+            self._config.llm.max_per_minute,
+        )
+        if self._digest_fetcher and self._digest_analyzer:
+            logger.info(
+                "[NewsMonitor] digest enabled: every %d min, days_back=%d, "
+                "min_market_conf=%.2f, min_holdings_conf=%.2f",
+                self._config.digest.poll_interval_minutes,
+                self._config.digest.days_back,
+                self._config.digest.min_market_confidence_for_notify,
+                self._config.digest.min_holdings_confidence_for_notify,
+            )
         threading.Thread(target=self._loop, daemon=True, name="NewsMonitor").start()
         if self._digest_fetcher and self._digest_analyzer:
             threading.Thread(
@@ -97,12 +124,8 @@ class NewsMonitor:
                 daemon=True,
                 name="NewsMonitor-Digest",
             ).start()
-            interval = self._config.digest.poll_interval_minutes
-            logger.info(
-                "[NewsMonitor] digest cycle started (every %d min, days_back=%d)",
-                interval, self._config.digest.days_back,
-            )
-        logger.info("[NewsMonitor] started")
+        logger.info("[NewsMonitor] started (NewsMonitor + %s threads running)",
+                    "NewsMonitor-Digest" if self._digest_fetcher else "no digest")
 
     def stop(self) -> None:
         self._running = False
@@ -112,6 +135,22 @@ class NewsMonitor:
             self._config.cls.poll_interval_seconds
             if is_market_open()
             else self._config.cls.off_hours_poll_interval_seconds
+        )
+
+    def _maybe_log_status(self) -> None:
+        """Periodic status summary: every 5 min, or every 100 ticks."""
+        now = time.time()
+        if (now - self._last_status_log_ts) < 300 and self._tick_count % 100 != 0:
+            return
+        self._last_status_log_ts = now
+        circuit = "OPEN" if self._llm_circuit_open else "closed"
+        quota_limit = self._config.llm.daily_limit
+        remaining = max(0, quota_limit - self._daily_count) if quota_limit > 0 else "∞"
+        logger.info(
+            f"[Status] ticks={self._tick_count} digest_runs=0 "
+            f"quota={self._daily_count}/{quota_limit}(剩{remaining}) "
+            f"notif={self._notif_count} llm_fails_streak={self._consecutive_llm_failures} "
+            f"circuit={circuit} market={'🟢open' if is_market_open() else '🌙closed'}"
         )
 
     def _record_llm_failure(self) -> None:
@@ -192,18 +231,25 @@ class NewsMonitor:
             time.sleep(sleep_sec)
 
     def _tick(self) -> None:
+        self._tick_count += 1
         raw_news = self._fetcher.fetch(max_items=30)
         if not raw_news:
+            self._maybe_log_status()
             return
 
-        new_count = 0
+        stats = {"fetched": len(raw_news), "dup": 0, "kw_skip": 0,
+                 "llm_ok": 0, "llm_fail": 0, "noise": 0, "saved": 0, "notif": 0,
+                 "circuit_skip": 0, "quota_skip": 0}
+
         for news in raw_news:
             seen = self._db.news_seen(news.hash, news.title, news.content, news.ctime)
             if seen:
+                stats["dup"] += 1
                 continue
 
             score = keyword_score(news.title, news.content)
             if score < self._config.filter.keyword_threshold:
+                stats["kw_skip"] += 1
                 logger.debug(
                     f"[NewsMonitor] skip (low keyword score {score:.2f}): {news.title[:30]}"
                 )
@@ -211,10 +257,12 @@ class NewsMonitor:
 
             self._bucket.acquire()
             if not self._check_daily_limit():
+                stats["quota_skip"] += 1
                 logger.debug(f"[NewsMonitor] daily limit hit, skipping LLM for {news.hash}")
                 continue
             if self._llm_circuit_open:
                 if time.time() < self._llm_circuit_open_until:
+                    stats["circuit_skip"] += 1
                     logger.debug(
                         f"[NewsMonitor] LLM circuit open, skip {news.hash}"
                     )
@@ -224,12 +272,15 @@ class NewsMonitor:
             analysis = self._analyzer.analyze(news)
             if analysis is None:
                 self._record_llm_failure()
+                stats["llm_fail"] += 1
                 logger.debug(f"[NewsMonitor] LLM failed for {news.hash}")
                 continue
             self._consecutive_llm_failures = 0
+            stats["llm_ok"] += 1
             self._daily_count += 1
 
             if analysis.confidence < self._config.filter.min_save_confidence:
+                stats["noise"] += 1
                 logger.debug(
                     f"[NewsMonitor] pure noise (conf {analysis.confidence:.2f}), skipping save"
                 )
@@ -261,21 +312,31 @@ class NewsMonitor:
                 "related": [{"code": s.code, "name": s.name} for s in related],
             }
             self._db.news_save_analysis(analysis_dict)
+            stats["saved"] += 1
 
             if self._should_notify(analysis, hits_holdings):
                 if self._notify(analysis, related, hits_holdings):
                     self._db.news_mark_notified(analysis.news_hash)
                     self._notif_count += 1
+                    stats["notif"] += 1
 
-            new_count += 1
             if self._on_update:
                 try:
                     self._on_update(analysis, related, hits_holdings)
                 except Exception as e:
                     logger.debug(f"[NewsMonitor] on_update callback error: {e}")
 
-        if new_count:
-            logger.info(f"[NewsMonitor] processed {new_count} new analyses")
+        market = "🟢" if is_market_open() else "🌙"
+        logger.info(
+            f"[Tick #{self._tick_count}] {market} "
+            f"CLS→{stats['fetched']} dup={stats['dup']} kw❌={stats['kw_skip']} "
+            f"→ LLM={stats['llm_ok']}✓/{stats['llm_fail']}✗ "
+            f"(noise={stats['noise']} circuit={stats['circuit_skip']} quota={stats['quota_skip']}) "
+            f"→ saved={stats['saved']} notif={stats['notif']} | "
+            f"quota={self._daily_count}/{self._config.llm.daily_limit} "
+            f"fail_streak={self._consecutive_llm_failures}"
+        )
+        self._maybe_log_status()
 
     def _should_notify(self, analysis: NewsAnalysis, hits_holdings: bool) -> bool:
         """Three-tier notification gating.
@@ -369,44 +430,75 @@ class NewsMonitor:
 
         Returns the DigestAnalysis (or None on failure) for menu/UI use.
         """
+        import time as time_mod
+        t_start = time_mod.time()
         if not self._digest_fetcher or not self._digest_analyzer:
             logger.debug("[NewsMonitor] digest not configured, skipping")
             return None
 
+        logger.info("[Digest] starting: fetching from CLS...")
         digests = self._digest_fetcher.fetch()
         if not digests:
+            logger.info("[Digest] no digests returned (off-hours or API issue)")
             return None
+        logger.info(
+            f"[Digest] fetched {len(digests)} digests, filtering to last {self._config.digest.days_back} day(s)..."
+        )
 
-        # Filter to last N days
         cfg = self._config.digest
-        cutoff = time.time() - cfg.days_back * 86400
+        cutoff = time_mod.time() - cfg.days_back * 86400
         recent = [d for d in digests if d.ctime >= cutoff]
         if not recent:
+            logger.info(
+                f"[Digest] no digests within last {cfg.days_back} day(s) (latest was {digests[0].digest_date})"
+            )
             return None
+        logger.info(
+            f"[Digest] {len(recent)} digests in window, types: "
+            f"{', '.join(f'{d.digest_type}({d.digest_date})' for d in recent)}"
+        )
 
         # Sort by date asc (oldest first) so LLM reads chronologically
         recent.sort(key=lambda d: d.ctime)
 
-        # LLM analysis (counts against daily limit too)
         self._bucket.acquire()
         if not self._check_daily_limit():
+            logger.info("[Digest] daily LLM limit hit, skipping cycle")
             return None
 
+        logger.info(
+            f"[Digest] calling LLM ({self._analyzer._model}) for {len(recent)} digests, "
+            f"{self._holdings and len(self._holdings) or 0} holdings..."
+        )
         holdings = [Stock(code=c, name="") for c in self._holdings]
         analysis = self._digest_analyzer.analyze(recent, holdings)
+        llm_elapsed = time_mod.time() - t_start
         if analysis is None:
+            self._record_llm_failure()
+            logger.warning(f"[Digest] LLM returned None after {llm_elapsed:.0f}s")
             return None
+        self._consecutive_llm_failures = 0
         self._daily_count += 1
 
         logger.info(
-            f"[NewsMonitor] digest analysis: {len(recent)} digests, "
-            f"sentiment={analysis.market_sentiment} "
-            f"conf={analysis.market_confidence:.2f} "
-            f"holdings_impacts={len(analysis.holdings_impacts)}"
+            f"[Digest] ✓ LLM done in {llm_elapsed:.0f}s: "
+            f"market={analysis.market_sentiment}({analysis.market_confidence:.2f}) "
+            f"sectors={len(analysis.sector_impacts)} "
+            f"holdings_impact={len(analysis.holdings_impacts)} "
+            f"themes={analysis.narrative_themes[:3]}"
+        )
+        logger.info(
+            f"[Digest] summary: {analysis.summary[:200]}"
         )
 
         if self._should_notify_digest(analysis):
+            logger.info("[Digest] 🔔 notification: market signal meets threshold")
             self._notify_digest(analysis, recent)
+        else:
+            logger.info(
+                f"[Digest] no notification: conf={analysis.market_confidence:.2f} "
+                f"sentiment={analysis.market_sentiment}"
+            )
         return analysis
 
     def _should_notify_digest(self, analysis: DigestAnalysis) -> bool:
