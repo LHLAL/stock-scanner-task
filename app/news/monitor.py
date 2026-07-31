@@ -28,9 +28,11 @@ class NewsMonitor:
         holdings: Set[str],
         db: PriceDB,
         on_update=None,
+        holdings_config: Optional[list] = None,
     ):
         self._config = config
         self._holdings = holdings
+        self._holdings_config = holdings_config or []
         self._db = db
         self._on_update = on_update
 
@@ -152,6 +154,24 @@ class NewsMonitor:
             f"notif={self._notif_count} llm_fails_streak={self._consecutive_llm_failures} "
             f"circuit={circuit} market={'🟢open' if is_market_open() else '🌙closed'}"
         )
+
+    def _normalize_holdings(self, items: list) -> list:
+        """Override LLM-hallucinated names with config-grounded names.
+
+        LLM sometimes returns wrong code-name pairs (e.g. sh601949
+        labeled as 中国石化, which is actually sh600028). This helper
+        forces names to match the user's known holdings.
+        """
+        if not items:
+            return items
+        names_by_code = {h.code: h.name for h in self._holdings_config}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            code = item.get("code", "")
+            if code in names_by_code:
+                item["name"] = names_by_code[code]
+        return items
 
     def _record_llm_failure(self) -> None:
         """Track consecutive LLM failures; open circuit after 3 in a row."""
@@ -289,6 +309,12 @@ class NewsMonitor:
             related = self._sector_mapper.map_analysis(analysis.sectors, analysis.stocks)
             related_codes = {s.code for s in related}
             hits_holdings: bool = bool(self._holdings & related_codes)
+
+            # Override LLM-hallucinated names in news's own stocks list
+            self._normalize_holdings(
+                [{"code": s.code, "name": s.name} for s in analysis.stocks]
+            )
+            # Also normalize holdings impacts if any leaked in (defensive)
 
             analysis_dict = {
                 "news_hash": analysis.news_hash,
@@ -492,6 +518,8 @@ class NewsMonitor:
         )
 
         # Persist to DB for menu/UI display and historical comparison
+        # Override LLM-hallucinated stock names with config-grounded names
+        self._normalize_holdings(analysis.holdings_impacts)
         self._db.news_save_digest({
             "analyzed_at": time_mod.time(),
             "date_range": (f"{recent[0].digest_date} ~ {recent[-1].digest_date}"

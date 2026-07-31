@@ -1050,3 +1050,65 @@ class TestDigestPersistence:
 
         digests = setup_monitor._db.news_get_recent_digests()
         assert len(digests) == 0
+
+
+class TestNormalizeHoldings:
+    """Override LLM-hallucinated code-name pairs with config-grounded names."""
+
+    def test_overrides_hallucinated_name(self, setup_monitor):
+        # Simulate LLM getting the code wrong: sh601949 is actually 中国出版,
+        # not 中国石化. The monitor should override the name.
+        items = [
+            {"code": "sh601949", "name": "中国石化"},   # ← LLM hallucinated
+            {"code": "sh600028", "name": ""},           # ← LLM gave empty
+        ]
+        setup_monitor._holdings_config = [
+            type("H", (), {"code": "sh601949", "name": "中国出版"})(),
+            type("H", (), {"code": "sh600028", "name": "中国石化"})(),
+        ]
+        result = setup_monitor._normalize_holdings(items)
+        assert result[0]["name"] == "中国出版"  # overridden from "中国石化"
+        assert result[1]["name"] == "中国石化"  # overridden from ""
+
+    def test_keeps_unknown_code_unchanged(self, setup_monitor):
+        # codes not in user's holdings should be left alone
+        items = [{"code": "sh688981", "name": "Some Name"}]
+        setup_monitor._holdings_config = [
+            type("H", (), {"code": "sh601398", "name": "工商银行"})(),
+        ]
+        result = setup_monitor._normalize_holdings(items)
+        assert result[0]["name"] == "Some Name"   # unchanged
+
+    def test_empty_list(self, setup_monitor):
+        assert setup_monitor._normalize_holdings([]) == []
+
+    def test_non_dict_items_skipped(self, setup_monitor):
+        items = [{"code": "sh601398"}, "string item", None, {"code": "sh600028", "name": "X"}]
+        setup_monitor._holdings_config = [
+            type("H", (), {"code": "sh601398", "name": "工商银行"})(),
+        ]
+        result = setup_monitor._normalize_holdings(items)
+        # Non-dict items skipped, dict items with matching code get names
+        assert isinstance(result[0], dict)
+        assert result[0]["code"] == "sh601398"
+        assert result[1] == "string item"
+        assert result[2] is None
+        assert result[3]["code"] == "sh600028"
+
+    def test_digest_holdings_impacts_overridden(self, setup_monitor):
+        """End-to-end: digest analysis saves with corrected names."""
+        from app.news.digest import DigestAnalysis
+        setup_monitor._holdings_config = [
+            type("H", (), {"code": "sh601398", "name": "工商银行"})(),
+            type("H", (), {"code": "sh600519", "name": "贵州茅台"})(),
+        ]
+        bad = DigestAnalysis(
+            digest_hashes=["h"],
+            summary="x",
+            holdings_impacts=[
+                {"code": "sh601398", "name": "宇宙银行", "impact": "positive",
+                 "confidence": 0.8, "reason": "test"},  # ← wrong name
+            ],
+        )
+        setup_monitor._normalize_holdings(bad.holdings_impacts)
+        assert bad.holdings_impacts[0]["name"] == "工商银行"

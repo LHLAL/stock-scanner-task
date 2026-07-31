@@ -120,6 +120,7 @@ class StockMenuBarApp(rumps.App):
                     holdings=holdings_codes,
                     db=self._db,
                     on_update=self._on_news_update,
+                    holdings_config=config.holdings,
                 )
             except Exception as e:
                 logger.warning(f"⚠️ 新闻模块初始化失败: {e}")
