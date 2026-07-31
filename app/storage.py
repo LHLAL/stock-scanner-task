@@ -73,6 +73,27 @@ class PriceDB:
                     narrative_themes TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS news_digests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    analyzed_at REAL,
+                    date_range TEXT,
+                    sentiment TEXT,
+                    confidence REAL,
+                    summary TEXT,
+                    rationale TEXT,
+                    sector_impacts TEXT,
+                    holdings_impacts TEXT,
+                    key_events TEXT,
+                    narrative_themes TEXT,
+                    digest_count INTEGER,
+                    digest_hashes TEXT
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_digests_analyzed_at "
+                "ON news_digests(analyzed_at DESC)"
+            )
             conn.commit()
             conn.close()
 
@@ -291,6 +312,64 @@ class PriceDB:
             )
             conn.commit()
             conn.close()
+
+    def news_save_digest(self, d: dict) -> None:
+        """Save one digest cycle run (one row per LLM analysis)."""
+        with self._lock:
+            conn = sqlite3.connect(self._db_path)
+            conn.execute(
+                "INSERT INTO news_digests "
+                "(analyzed_at, date_range, sentiment, confidence, summary, rationale, "
+                "sector_impacts, holdings_impacts, key_events, narrative_themes, "
+                "digest_count, digest_hashes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    d.get("analyzed_at", 0.0),
+                    d.get("date_range", ""),
+                    d.get("sentiment", "neutral"),
+                    d.get("confidence", 0.0),
+                    d.get("summary", ""),
+                    d.get("rationale", ""),
+                    json.dumps(d.get("sector_impacts", []), ensure_ascii=False),
+                    json.dumps(d.get("holdings_impacts", []), ensure_ascii=False),
+                    json.dumps(d.get("key_events", []), ensure_ascii=False),
+                    json.dumps(d.get("narrative_themes", []), ensure_ascii=False),
+                    d.get("digest_count", 0),
+                    json.dumps(d.get("digest_hashes", []), ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+    def news_get_recent_digests(self, limit: int = 7) -> List[dict]:
+        """Fetch recent digest runs (most recent first)."""
+        with self._lock:
+            conn = sqlite3.connect(self._db_path)
+            rows = conn.execute(
+                "SELECT analyzed_at, date_range, sentiment, confidence, summary, "
+                "rationale, sector_impacts, holdings_impacts, key_events, narrative_themes, "
+                "digest_count, digest_hashes "
+                "FROM news_digests ORDER BY analyzed_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            conn.close()
+        result: List[dict] = []
+        for row in rows:
+            result.append({
+                "analyzed_at": row[0],
+                "date_range": row[1] or "",
+                "sentiment": row[2] or "neutral",
+                "confidence": float(row[3] or 0.0),
+                "summary": row[4] or "",
+                "rationale": row[5] or "",
+                "sector_impacts": json.loads(row[6]) if row[6] else [],
+                "holdings_impacts": json.loads(row[7]) if row[7] else [],
+                "key_events": json.loads(row[8]) if row[8] else [],
+                "narrative_themes": json.loads(row[9]) if row[9] else [],
+                "digest_count": int(row[10] or 0),
+                "digest_hashes": json.loads(row[11]) if row[11] else [],
+            })
+        return result
 
     def news_get_recent_analyses(self, limit: int = 20) -> List[dict]:
         """返回最近的分析结果（按 analyzed_at 倒序）."""

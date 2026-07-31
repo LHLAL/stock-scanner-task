@@ -187,3 +187,95 @@ class TestEnhancedAnalysis:
         results = db.news_get_recent_analyses()
         assert results[0]["is_kneck"] is True
         assert results[0]["news_category"] == "patent"
+
+
+class TestNewsDigest:
+    def test_save_and_retrieve(self, temp_db_path):
+        db = PriceDB(temp_db_path)
+        d = {
+            "analyzed_at": 1785372000.0,
+            "date_range": "2026-07-30 ~ 2026-07-30",
+            "sentiment": "volatile",
+            "confidence": 0.78,
+            "summary": "市场波动但有结构性机会",
+            "rationale": "综合来看政策面与资金面共同支撑",
+            "sector_impacts": [
+                {"sector": "半导体/AI算力", "direction": "bullish",
+                 "magnitude": "high", "reason": "长鑫科技上市"}
+            ],
+            "holdings_impacts": [
+                {"code": "sh601398", "name": "工商银行", "impact": "neutral",
+                 "confidence": 0.5, "reason": "银行业整体稳定"},
+            ],
+            "key_events": ["央行续作MLF", "长鑫科技上市", "MSCI纳入"],
+            "narrative_themes": ["AI算力", "国产替代"],
+            "digest_count": 3,
+            "digest_hashes": ["h1", "h2", "h3"],
+        }
+        db.news_save_digest(d)
+
+        result = db.news_get_recent_digests()
+        assert len(result) == 1
+        r = result[0]
+        assert r["sentiment"] == "volatile"
+        assert r["confidence"] == 0.78
+        assert r["summary"] == "市场波动但有结构性机会"
+        assert len(r["sector_impacts"]) == 1
+        assert r["sector_impacts"][0]["sector"] == "半导体/AI算力"
+        assert len(r["holdings_impacts"]) == 1
+        assert r["holdings_impacts"][0]["name"] == "工商银行"
+        assert r["narrative_themes"] == ["AI算力", "国产替代"]
+        assert r["digest_count"] == 3
+
+    def test_get_recent_digests_ordered_by_time(self, temp_db_path):
+        db = PriceDB(temp_db_path)
+        db.news_save_digest({"analyzed_at": 100.0, "date_range": "older",
+                            "sentiment": "bullish", "confidence": 0.7,
+                            "summary": "old", "rationale": "",
+                            "sector_impacts": [], "holdings_impacts": [],
+                            "key_events": [], "narrative_themes": [],
+                            "digest_count": 1, "digest_hashes": []})
+        db.news_save_digest({"analyzed_at": 200.0, "date_range": "newer",
+                            "sentiment": "bearish", "confidence": 0.8,
+                            "summary": "new", "rationale": "",
+                            "sector_impacts": [], "holdings_impacts": [],
+                            "key_events": [], "narrative_themes": [],
+                            "digest_count": 1, "digest_hashes": []})
+        result = db.news_get_recent_digests()
+        assert len(result) == 2
+        assert result[0]["date_range"] == "newer"
+        assert result[1]["date_range"] == "older"
+
+    def test_get_recent_digests_limit(self, temp_db_path):
+        db = PriceDB(temp_db_path)
+        for i in range(5):
+            db.news_save_digest({"analyzed_at": float(i), "date_range": f"d{i}",
+                                "sentiment": "neutral", "confidence": 0.5,
+                                "summary": "", "rationale": "",
+                                "sector_impacts": [], "holdings_impacts": [],
+                                "key_events": [], "narrative_themes": [],
+                                "digest_count": 1, "digest_hashes": []})
+        result = db.news_get_recent_digests(limit=3)
+        assert len(result) == 3
+
+    def test_save_digest_unicode(self, temp_db_path):
+        db = PriceDB(temp_db_path)
+        d = {
+            "analyzed_at": 100.0,
+            "date_range": "中文日期范围",
+            "sentiment": "volatile",
+            "confidence": 0.7,
+            "summary": "中文摘要：央行降准释放流动性",
+            "rationale": "中文推理",
+            "sector_impacts": [{"sector": "半导体/AI算力"}],
+            "holdings_impacts": [{"code": "sh601398", "name": "工商银行"}],
+            "key_events": ["事件1", "事件2"],
+            "narrative_themes": ["AI算力", "国产替代"],
+            "digest_count": 1,
+            "digest_hashes": ["h1"],
+        }
+        db.news_save_digest(d)
+        r = db.news_get_recent_digests()[0]
+        assert r["date_range"] == "中文日期范围"
+        assert r["summary"] == "中文摘要：央行降准释放流动性"
+        assert r["sector_impacts"][0]["sector"] == "半导体/AI算力"

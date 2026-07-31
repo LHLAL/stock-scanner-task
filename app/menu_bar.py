@@ -101,6 +101,7 @@ class StockMenuBarApp(rumps.App):
         self._timestamp_item: rumps.MenuItem = rumps.MenuItem("刷新于: --")
         self._news_item: Optional[rumps.MenuItem] = None
         self._news_detail_items: List[rumps.MenuItem] = []
+        self._news_detail_items: List[rumps.MenuItem] = []
         self._news_lock = threading.Lock()
         self._running = False
         self._heartbeat_count: int = 0
@@ -205,6 +206,10 @@ class StockMenuBarApp(rumps.App):
             placeholder = rumps.MenuItem("  (等待新分析…)")
             self._news_detail_items.append(placeholder)
             self._news_item.add(placeholder)
+
+            if self._config.news.digest.enabled:
+                self._digest_item = rumps.MenuItem("📊 每日精选 (加载中…)")
+                self.menu.add(self._digest_item)
 
         self.menu.add(rumps.separator)
 
@@ -427,6 +432,82 @@ class StockMenuBarApp(rumps.App):
             head.add(rumps.MenuItem(f"⏱ {ts}"))
             self._news_item.add(head)
             self._news_detail_items.append(head)
+
+        self._refresh_digest_menu()
+
+    def _refresh_digest_menu(self) -> None:
+        """Render recent digests in the 📊 每日精选 submenu."""
+        if not self._digest_item:
+            return
+        try:
+            digests = self._db.news_get_recent_digests(limit=7)
+            self._digest_item.title = f"📊 每日精选 ({len(digests)})"
+            submenu = self._digest_item._menuitem.submenu()
+            for child in list(submenu.itemArray() or []):
+                submenu.removeItem_(child)
+            self._digest_detail_items = []
+
+            if not digests:
+                submenu.addItem_(rumps.MenuItem("  (等待首次 digest 分析…)")._menuitem)
+                return
+
+            for d in digests:
+                sentiment_emoji = {
+                    "bullish": "🟢", "bearish": "🔴",
+                    "neutral": "⚪", "volatile": "🟡",
+                }.get(d["sentiment"], "⚪")
+                head = rumps.MenuItem(
+                    f"{sentiment_emoji} [{d['date_range']}] "
+                    f"{d['sentiment']}({d['confidence']:.2f})"
+                )
+
+                head.add(rumps.MenuItem(f"摘要: {d['summary'][:120]}"))
+                if d.get("rationale"):
+                    head.add(rumps.MenuItem(f"推理: {d['rationale'][:120]}"))
+
+                if d.get("narrative_themes"):
+                    head.add(rumps.MenuItem(
+                        f"主题: {', '.join(d['narrative_themes'][:5])}"
+                    ))
+
+                holdings = d.get("holdings_impacts", []) or []
+                if holdings:
+                    lines = []
+                    for h in holdings[:5]:
+                        if not isinstance(h, dict):
+                            continue
+                        code = h.get("code", "")
+                        name = h.get("name", "")
+                        impact = h.get("impact", "")
+                        conf = h.get("confidence", 0)
+                        reason = h.get("reason", "")
+                        icon = "🟢" if impact == "positive" else (
+                            "🔴" if impact == "negative" else "⚪")
+                        disp = (name + f"({code})") if name else code
+                        lines.append(f"{icon} {disp} ({conf:.2f}): {reason[:40]}")
+                    head.add(rumps.MenuItem(f"持仓影响: {' / '.join(lines)}"))
+
+                sectors = d.get("sector_impacts", []) or []
+                if sectors:
+                    lines = []
+                    for s in sectors[:4]:
+                        if not isinstance(s, dict):
+                            continue
+                        direction_emoji = {"bullish": "🟢", "bearish": "🔴"}.get(
+                            s.get("direction", ""), "⚪")
+                        lines.append(f"{direction_emoji} {s.get('sector','')}: {s.get('reason','')[:50]}")
+                    head.add(rumps.MenuItem(f"板块: {' / '.join(lines)}"))
+
+                key_events = d.get("key_events", []) or []
+                if key_events:
+                    head.add(rumps.MenuItem(f"要闻: {' | '.join(key_events[:3])}"))
+
+                ts = datetime.fromtimestamp(d["analyzed_at"]).strftime("%m-%d %H:%M")
+                head.add(rumps.MenuItem(f"⏱ {ts}"))
+                self._digest_item._menuitem.submenu().addItem_(head._menuitem)
+                self._digest_detail_items.append(head)
+        except Exception as e:
+            logger.debug(f"digest menu rebuild failed: {e}")
 
     def _update_ui(self) -> None:
         with self._quotes_lock:

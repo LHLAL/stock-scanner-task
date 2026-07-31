@@ -491,6 +491,23 @@ class NewsMonitor:
             f"[Digest] summary: {analysis.summary[:200]}"
         )
 
+        # Persist to DB for menu/UI display and historical comparison
+        self._db.news_save_digest({
+            "analyzed_at": time_mod.time(),
+            "date_range": (f"{recent[0].digest_date} ~ {recent[-1].digest_date}"
+                           if len(recent) > 1 else recent[0].digest_date),
+            "sentiment": analysis.market_sentiment,
+            "confidence": analysis.market_confidence,
+            "summary": analysis.summary,
+            "rationale": analysis.rationale,
+            "sector_impacts": analysis.sector_impacts,
+            "holdings_impacts": analysis.holdings_impacts,
+            "key_events": analysis.key_events,
+            "narrative_themes": analysis.narrative_themes,
+            "digest_count": len(recent),
+            "digest_hashes": analysis.digest_hashes,
+        })
+
         if self._should_notify_digest(analysis):
             logger.info("[Digest] 🔔 notification: market signal meets threshold")
             self._notify_digest(analysis, recent)

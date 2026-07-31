@@ -977,7 +977,7 @@ class TestProgressLogging:
         assert "[Digest] starting" in msgs
         assert "[Digest] fetched 2 digests" in msgs
         assert "[Digest] 2 digests in window" in msgs
-        assert "morning(2026-07-30)" in msgs
+        assert "morning(" in msgs and "noon(" in msgs
         assert "calling LLM" in msgs
         assert "[Digest] ✓ LLM done" in msgs
         assert "market=bullish(0.80)" in msgs
@@ -1016,3 +1016,37 @@ class TestProgressLogging:
             # May or may not be called depending on tick_count % 100
             # We just check the function doesn't crash
             assert True
+
+
+class TestDigestPersistence:
+    """Successful digest cycle should save to DB."""
+
+    def test_successful_digest_saves_to_db(self, setup_monitor):
+        from app.news.digest import DigestAnalysis
+        from datetime import datetime, timezone, timedelta
+        now = int(datetime.now(tz=timezone(timedelta(hours=8))).timestamp())
+        d1 = _make_news_digest(title="财联社7月30日早间", ctime=now - 3600, digest_type="morning")
+        with patch.object(setup_monitor._digest_fetcher, "fetch", return_value=[d1]):
+            with patch.object(setup_monitor._digest_analyzer, "analyze") as mock_analyze:
+                mock_analyze.return_value = DigestAnalysis(
+                    digest_hashes=["h1"], summary="测试",
+                    market_sentiment="bullish", market_confidence=0.75,
+                )
+                setup_monitor.run_digest_cycle()
+
+        digests = setup_monitor._db.news_get_recent_digests()
+        assert len(digests) == 1
+        assert digests[0]["sentiment"] == "bullish"
+        assert digests[0]["confidence"] == 0.75
+        assert digests[0]["digest_count"] == 1
+
+    def test_failed_digest_does_not_save(self, setup_monitor):
+        from datetime import datetime, timezone, timedelta
+        now = int(datetime.now(tz=timezone(timedelta(hours=8))).timestamp())
+        d1 = _make_news_digest(title="财联社7月30日早间", ctime=now - 3600, digest_type="morning")
+        with patch.object(setup_monitor._digest_fetcher, "fetch", return_value=[d1]):
+            with patch.object(setup_monitor._digest_analyzer, "analyze", return_value=None):
+                setup_monitor.run_digest_cycle()
+
+        digests = setup_monitor._db.news_get_recent_digests()
+        assert len(digests) == 0
