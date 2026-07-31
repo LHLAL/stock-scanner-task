@@ -101,7 +101,6 @@ class StockMenuBarApp(rumps.App):
         self._timestamp_item: rumps.MenuItem = rumps.MenuItem("刷新于: --")
         self._news_item: Optional[rumps.MenuItem] = None
         self._news_detail_items: List[rumps.MenuItem] = []
-        self._news_detail_items: List[rumps.MenuItem] = []
         self._news_lock = threading.Lock()
         self._running = False
         self._heartbeat_count: int = 0
