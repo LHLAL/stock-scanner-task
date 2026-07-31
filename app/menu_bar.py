@@ -101,6 +101,9 @@ class StockMenuBarApp(rumps.App):
         self._timestamp_item: rumps.MenuItem = rumps.MenuItem("刷新于: --")
         self._news_item: Optional[rumps.MenuItem] = None
         self._news_detail_items: List[rumps.MenuItem] = []
+        self._digest_item: Optional[rumps.MenuItem] = None
+        self._digest_detail_items: List[rumps.MenuItem] = []
+        self._last_digests: List[dict] = []
         self._news_lock = threading.Lock()
         self._running = False
         self._heartbeat_count: int = 0
@@ -209,6 +212,11 @@ class StockMenuBarApp(rumps.App):
             if self._config.news.digest.enabled:
                 self._digest_item = rumps.MenuItem("📊 每日精选 (加载中…)")
                 self.menu.add(self._digest_item)
+                # Add a placeholder so the submenu is initialized
+                # (MenuItem without submenu until first child is added)
+                placeholder = rumps.MenuItem("  (等待首次 digest 分析…)")
+                self._digest_item.add(placeholder)
+                self._digest_detail_items.append(placeholder)
 
         self.menu.add(rumps.separator)
 
@@ -385,6 +393,8 @@ class StockMenuBarApp(rumps.App):
             placeholder = rumps.MenuItem("  (等待新分析…)")
             self._news_item.add(placeholder)
             self._news_detail_items.append(placeholder)
+            # Still need to refresh digest menu even when no news
+            self._refresh_digest_menu()
             return
 
         holdings_codes = {h.code for h in self._config.holdings}
@@ -442,6 +452,16 @@ class StockMenuBarApp(rumps.App):
             digests = self._db.news_get_recent_digests(limit=7)
             self._digest_item.title = f"📊 每日精选 ({len(digests)})"
             submenu = self._digest_item._menuitem.submenu()
+            if submenu is None:
+                # Safety net: if submenu doesn't exist, force-create by adding
+                # then removing a placeholder
+                tmp = rumps.MenuItem(".")
+                self._digest_item.add(tmp)
+                self._digest_item.remove(tmp)
+                submenu = self._digest_item._menuitem.submenu()
+            if submenu is None:
+                logger.debug("digest submenu still None after init")
+                return
             for child in list(submenu.itemArray() or []):
                 submenu.removeItem_(child)
             self._digest_detail_items = []
