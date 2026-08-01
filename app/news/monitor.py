@@ -47,12 +47,22 @@ class NewsMonitor:
             sign=config.cls.sign,
             cookie=config.cls.cookie,
         )
-        from app.llm import OllamaClient
-        self._llm_client = OllamaClient(
-            host=config.llm.host,
-            api_key=config.llm.api_key,
-            timeout=config.llm.request_timeout_seconds,
-        )
+        from app.llm import OllamaClient, AnthropicClient
+        cache_ttl = int(config.llm.cache_ttl_hours * 3600)
+        if config.llm.provider == "anthropic":
+            self._llm_client = AnthropicClient(
+                api_key=config.llm.api_key,
+                base_url=config.llm.base_url,
+                timeout=config.llm.request_timeout_seconds,
+                cache_ttl_seconds=cache_ttl,
+            )
+        else:  # ollama (default)
+            self._llm_client = OllamaClient(
+                host=config.llm.host,
+                api_key=config.llm.api_key,
+                timeout=config.llm.request_timeout_seconds,
+                cache_ttl_seconds=cache_ttl,
+            )
         self._analyzer = OllamaAnalyzer(
             client=self._llm_client,
             model=config.llm.model,

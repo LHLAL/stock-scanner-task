@@ -34,13 +34,15 @@ class NewsFilterConfig:
 
 @dataclass
 class LlmConfig:
-    model: str = "minimax-m2.5:cloud"
+    provider: str = "ollama"  # "ollama" | "anthropic"
+    model: str = "gpt-oss:20b-cloud"
     host: str = "http://localhost:11434"
     api_key: Optional[str] = None
     max_per_minute: int = 12
     cache_ttl_hours: int = 24
     request_timeout_seconds: int = 30
     daily_limit: int = 1000           # 0 = unlimited
+    base_url: Optional[str] = None    # for anthropic; uses default if None
 
 
 @dataclass
@@ -197,13 +199,15 @@ def load_config(path: Optional[str] = None) -> AppConfig:
                 max_notifications_per_day=data.get("news", {}).get("filter", {}).get("max_notifications_per_day", 20),
             ),
             llm=LlmConfig(
-                model=data.get("news", {}).get("llm", {}).get("model", "minimax-m2.5:cloud"),
+                provider=data.get("news", {}).get("llm", {}).get("provider", "ollama"),
+                model=data.get("news", {}).get("llm", {}).get("model", "gpt-oss:20b-cloud"),
                 host=data.get("news", {}).get("llm", {}).get("host", "http://localhost:11434"),
                 api_key=data.get("news", {}).get("llm", {}).get("api_key"),
                 max_per_minute=data.get("news", {}).get("llm", {}).get("max_per_minute", 12),
                 cache_ttl_hours=data.get("news", {}).get("llm", {}).get("cache_ttl_hours", 24),
                 request_timeout_seconds=data.get("news", {}).get("llm", {}).get("request_timeout_seconds", 30),
                 daily_limit=data.get("news", {}).get("llm", {}).get("daily_limit", 1000),
+                base_url=data.get("news", {}).get("llm", {}).get("base_url"),
             ),
             sector=SectorConfig(
                 cache_ttl_days=data.get("news", {}).get("sector", {}).get("cache_ttl_days", 7),

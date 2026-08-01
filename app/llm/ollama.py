@@ -6,7 +6,7 @@ Works for:
 """
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import requests
 
@@ -21,7 +21,9 @@ class OllamaClient(LLMClient):
         host: str = "http://localhost:11434",
         api_key: Optional[str] = None,
         timeout: int = 30,
+        cache_ttl_seconds: int = 300,
     ):
+        super().__init__(cache_ttl_seconds=cache_ttl_seconds)
         self._host = host.rstrip("/")
         # Local daemon ignores api_key (accepts any value), cloud requires real key
         self._api_key = (
@@ -38,12 +40,12 @@ class OllamaClient(LLMClient):
             h["Authorization"] = f"Bearer {self._api_key}"
         return h
 
-    def chat(
+    def _do_chat(
         self,
         messages: List[ChatMessage],
         model: str,
         temperature: float = 0.1,
-        response_format: Optional[Dict[str, str]] = None,
+        response_format: Optional[dict] = None,
         max_tokens: Optional[int] = None,
         timeout: int = 30,
     ) -> str:
@@ -117,7 +119,3 @@ class OllamaClient(LLMClient):
             return [m.get("id", "") for m in resp.json().get("data", [])]
         except Exception:
             return []
-
-    def _extract_base(self, full_name: str) -> str:
-        """Strip tag suffix: 'gpt-oss:20b-cloud' → 'gpt-oss:20b-cloud' (used as-is for cloud)."""
-        return full_name

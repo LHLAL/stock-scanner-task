@@ -36,13 +36,15 @@
       "max_notifications_per_day": 20
     },
     "llm": {
+      "provider": "ollama",
       "model": "gpt-oss:20b-cloud",
       "host": "http://localhost:11434",
       "api_key": null,
       "max_per_minute": 12,
       "cache_ttl_hours": 24,
       "request_timeout_seconds": 180,
-      "daily_limit": 1000
+      "daily_limit": 1000,
+      "base_url": null
     },
     "sector": {
       "cache_ttl_days": 4,
