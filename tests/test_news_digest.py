@@ -202,41 +202,41 @@ class TestDigestAnalyzer:
 
     def test_analyze_calls_llm_and_parses(self):
         llm = MagicMock()
-        llm._call_raw.return_value = '{"summary": "ok", "market_sentiment": "bullish", "market_confidence": 0.7, "sector_impacts": [], "holdings_impacts": []}'
+        llm.chat.return_value = '{"summary": "ok", "market_sentiment": "bullish", "market_confidence": 0.7, "sector_impacts": [], "holdings_impacts": []}'
         a = DigestAnalyzer(llm)
         result = a.analyze([_make_digest()], [])
         assert result is not None
         assert result.market_sentiment == "bullish"
-        llm._call_raw.assert_called_once()
+        llm.chat.assert_called_once()
 
     def test_analyze_includes_holdings_in_prompt(self):
         llm = MagicMock()
-        llm._call_raw.return_value = '{"market_confidence": 0.5}'
+        llm.chat.return_value = '{"market_confidence": 0.5}'
         from app.news.models import Stock
         a = DigestAnalyzer(llm)
         a.analyze([_make_digest()], [Stock(code="sh601398", name="工商银行")])
-        prompt = llm._call_raw.call_args[0][0]
+        prompt = llm.chat.call_args[0][0][1].content
         assert "sh601398" in prompt
         assert "工商银行" in prompt
 
     def test_analyze_returns_none_on_llm_failure(self):
         llm = MagicMock()
-        llm._call_raw.return_value = None
+        llm.chat.return_value = None
         a = DigestAnalyzer(llm)
         assert a.analyze([_make_digest()], []) is None
 
     def test_analyze_returns_none_on_invalid_json(self):
         llm = MagicMock()
-        llm._call_raw.return_value = "not json"
+        llm.chat.return_value = "not json"
         a = DigestAnalyzer(llm)
         assert a.analyze([_make_digest()], []) is None
 
     def test_analyze_includes_digest_content(self):
         llm = MagicMock()
-        llm._call_raw.return_value = '{"market_confidence": 0.5}'
+        llm.chat.return_value = '{"market_confidence": 0.5}'
         a = DigestAnalyzer(llm)
         a.analyze([_make_digest(content="央行降准0.5%释放流动性")], [])
-        prompt = llm._call_raw.call_args[0][0]
+        prompt = llm.chat.call_args[0][0][1].content
         assert "央行降准0.5%释放流动性" in prompt
 
 class TestHoldingsTableFormat:
@@ -248,7 +248,7 @@ class TestHoldingsTableFormat:
         d = Digest(id=1, title="t", digest_type="morning",
                    digest_date="2026-07-30", ctime=100, content="x")
         llm = MagicMock()
-        llm._call_raw.return_value = (
+        llm.chat.return_value = (
             '{"summary": "x", "market_sentiment": "bullish", "market_confidence": 0.7}'
         )
         analyzer = DigestAnalyzer(llm)
@@ -257,7 +257,7 @@ class TestHoldingsTableFormat:
             Stock(code="sh600028", name="中国石化"),
         ]
         analyzer.analyze([d], holdings)
-        prompt = llm._call_raw.call_args[0][0]
+        prompt = llm.chat.call_args[0][0][1].content
         assert "| 代码 | 名称 |" in prompt
         assert "| sh601398 | 工商银行 |" in prompt
         assert "| sh600028 | 中国石化 |" in prompt
@@ -269,8 +269,8 @@ class TestHoldingsTableFormat:
         d = Digest(id=1, title="t", digest_type="morning",
                    digest_date="2026-07-30", ctime=100, content="x")
         llm = MagicMock()
-        llm._call_raw.return_value = '{"summary": "x"}'
+        llm.chat.return_value = '{"summary": "x"}'
         analyzer = DigestAnalyzer(llm)
         analyzer.analyze([d], [])
-        prompt = llm._call_raw.call_args[0][0]
+        prompt = llm.chat.call_args[0][0][1].content
         assert "（无持仓）" in prompt

@@ -91,6 +91,13 @@ class PriceDB:
                     digest_hashes TEXT
                 )
             """)
+            # Migration: add schema_version to old news_digests tables
+            cols = {row[1] for row in
+                    conn.execute("PRAGMA table_info(news_digests)").fetchall()}
+            if "schema_version" not in cols:
+                conn.execute(
+                    "ALTER TABLE news_digests ADD COLUMN schema_version INTEGER DEFAULT 1"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_digests_analyzed_at "
                 "ON news_digests(analyzed_at DESC)"

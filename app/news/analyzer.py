@@ -82,24 +82,20 @@ def keyword_score(title: str, content: str) -> float:
     )
 
 
-NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请按"卡脖子供应链瓶颈理论"分析以下新闻，给出严格 JSON。
+NEWS_SYSTEM_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请按"卡脖子供应链瓶颈理论"分析 user message 给出的新闻。
 
-【新闻标题】 {title}
-【新闻内容】 {content}
-
-输出（合法 JSON，不要 markdown 包装）:
-{{
+输出必须严格遵循下面的 JSON schema（不要 markdown 包装，不要额外字段）:
+{
   "summary": "<一句话总结，≤30字>",
   "sectors": ["<行业板块大类>"],
   "stocks": [
-    {{"code": "sh601398", "name": "工商银行"}},
-    {{"code": "sh600519", "name": "贵州茅台"}}
-  ]  ← 注: 股票代码-名字对应是事实，禁止凭印象猜名字。如果不确定 name，就只填 code 留空 name。
+    {"code": "sh601398", "name": "工商银行"},
+    {"code": "sh600519", "name": "贵州茅台"}
+  ],
   "direction": "<bullish | bearish | neutral>",
   "confidence": <0.0-1.0>,
   "time_horizon": "<intraday | next_day | weekly>",
   "rationale": "<≤80字事实推理>",
-
   "news_category": "<policy|order|capacity|financial|patent|supply_disruption|general>",
   "bottleneck_order_signal": "<none|mentioned|strong>",
   "bottleneck_capacity_signal": "<none|expansion|utilization_high|inventory_warning>",
@@ -109,7 +105,7 @@ NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请
   "trend_horizon_years": <1-10>,
   "industry_certainty": "<speculative|emerging|established|dominant>",
   "narrative_themes": ["<AI算力|CPO|人形机器人|半导体设备|国产替代|光通信|特种气体|磷化铟|...>"]
-}}
+}
 
 ## 分析框架（卡脖子供应链瓶颈理论）
 
@@ -134,10 +130,9 @@ NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请
 - news_category 必填，决定下游通知权重
 - narrative_themes 用简短标签（如 "AI算力"、"CPO"、"国产替代"），≤5 个
 - is_kneck 仅在新闻明显涉及卡脖子/单点关键环节时设为 true
+- 股票代码-名字对应是事实，禁止凭印象猜名字。如果不确定 name，就只填 code 留空 name
 
 ### 置信度校准（必须严格遵守，超严格）
-
-按以下分档给 direction 和 confidence：
 
 | 档位 | confidence | direction 要求 |
 |------|-----------|---------------|
@@ -153,52 +148,37 @@ NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请
 """
 
 
-class OllamaAnalyzer:
-    """Ollama HTTP client for news analysis.
+NEWS_USER_TEMPLATE = """新闻标题: {title}
+新闻内容: {content}
+"""
 
-    Supports both local Ollama daemon and cloud models (need Authorization header).
+
+class OllamaAnalyzer:
+    """OpenAI-compatible LLM client wrapper for news analysis.
+
+    Uses LLMClient abstraction; defaults to OllamaClient (works for both
+    local daemon and ollama.com cloud). To swap providers, pass a different
+    LLMClient implementation in __init__.
     """
 
     def __init__(
         self,
-        model: str = "minimax-m2.5:cloud",
-        host: str = "http://localhost:11434",
-        api_key: Optional[str] = None,
-        timeout: int = 30,
+        client,
+        model: str = "gpt-oss:20b-cloud",  # minimax-m2.5 retired 2026-07-31
     ):
+        self._client = client
         self._model = model
-        self._host = host.rstrip("/")
-        self._api_key = api_key or os.environ.get("OLLAMA_API_KEY") or os.environ.get("OLLAMA_KEY")
-        self._timeout = timeout
-        self._lock = threading.Lock()
         self._auth_failed = False
-
-    def _headers(self) -> dict:
-        h = {"Content-Type": "application/json"}
-        if self._api_key:
-            h["Authorization"] = f"Bearer {self._api_key}"
-        return h
 
     def health_check(self) -> bool:
         try:
-            r = requests.get(
-                f"{self._host}/api/tags",
-                headers=self._headers(),
-                timeout=5,
-            )
-            r.raise_for_status()
-            models = [m.get("name", "") for m in r.json().get("models", [])]
+            models = self._client.list_models()
             available = any(self._model in m for m in models)
             if not available:
                 logger.warning(
-                    f"[OllamaAnalyzer] model {self._model} not in: {models[:5]}"
+                    f"[OllamaAnalyzer] model {self._model} not in {models[:5]}"
                 )
             return available
-        except requests.RequestException as e:
-            logger.warning(
-                f"[OllamaAnalyzer] daemon unreachable at {self._host}: {e}"
-            )
-            return False
         except Exception as e:
             logger.debug(f"[OllamaAnalyzer] health check failed: {e}")
             return False
@@ -207,61 +187,28 @@ class OllamaAnalyzer:
         """Return NewsAnalysis or None on failure."""
         if self._auth_failed:
             return None
-        prompt = NEWS_ANALYSIS_PROMPT.format(
-            title=news.title,
-            content=(news.content or "")[:1000],
-        )
-        payload = {
-            "model": self._model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.1},
-        }
-        raw = self._call_raw_with_payload(prompt, payload)
-        if raw is None:
-            return None
+        from app.llm.base import ChatMessage, LLMError
+        messages = [
+            ChatMessage("system", NEWS_SYSTEM_PROMPT),
+            ChatMessage("user", NEWS_USER_TEMPLATE.format(
+                title=news.title,
+                content=(news.content or "")[:1000],
+            )),
+        ]
         try:
-            analysis = NewsAnalysis.from_json(news.hash, raw)
-        except (ValueError, KeyError) as e:
-            logger.warning(f"[OllamaAnalyzer] parse failed: {e}")
-            return None
-        logger.debug(f"[OllamaAnalyzer] {self._model} for {news.hash}")
-        return analysis
-
-    def _call_raw(self, prompt: str) -> Optional[str]:
-        """Lower-level: send prompt, return raw response string."""
-        payload = {
-            "model": self._model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.1},
-        }
-        return self._call_raw_with_payload(prompt, payload)
-
-    def _call_raw_with_payload(self, prompt: str, payload: dict) -> Optional[str]:
-        if self._auth_failed:
-            return None
-        try:
-            with self._lock:
-                resp = requests.post(
-                    f"{self._host}/api/generate",
-                    headers=self._headers(),
-                    json=payload,
-                    timeout=self._timeout,
-                )
-            if resp.status_code in (401, 403):
+            raw = self._client.chat(
+                messages,
+                model=self._model,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+            )
+        except LLMError as e:
+            logger.warning(f"[OllamaAnalyzer] {e}")
+            if "auth" in str(e).lower():
                 self._auth_failed = True
-                logger.error(
-                    f"[OllamaAnalyzer] auth failed ({resp.status_code}); disabling"
-                )
-                return None
-            resp.raise_for_status()
-            return resp.json().get("response", "")
-        except requests.RequestException as e:
-            logger.warning(f"[OllamaAnalyzer] request failed: {e}")
             return None
+        try:
+            return NewsAnalysis.from_json(news.hash, raw)
         except (ValueError, KeyError) as e:
             logger.warning(f"[OllamaAnalyzer] parse failed: {e}")
             return None

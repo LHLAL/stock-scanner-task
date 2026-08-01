@@ -47,11 +47,15 @@ class NewsMonitor:
             sign=config.cls.sign,
             cookie=config.cls.cookie,
         )
-        self._analyzer = OllamaAnalyzer(
-            model=config.llm.model,
+        from app.llm import OllamaClient
+        self._llm_client = OllamaClient(
             host=config.llm.host,
             api_key=config.llm.api_key,
             timeout=config.llm.request_timeout_seconds,
+        )
+        self._analyzer = OllamaAnalyzer(
+            client=self._llm_client,
+            model=config.llm.model,
         )
         self._sector_mapper = SectorMapper()
         self._bucket = TokenBucket(rate_per_minute=config.llm.max_per_minute)
@@ -115,8 +119,8 @@ class NewsMonitor:
             self._config.llm.daily_limit,
             self._config.filter.keyword_threshold,
             self._config.filter.min_confidence_for_notify,
-            self._analyzer._model,
-            self._analyzer._timeout,
+            self._config.llm.model,
+            self._config.llm.request_timeout_seconds,
             self._config.llm.max_per_minute,
         )
         if self._digest_fetcher and self._digest_analyzer:
@@ -530,7 +534,7 @@ class NewsMonitor:
             return None
 
         logger.info(
-            f"[Digest] calling LLM ({self._analyzer._model}) for {len(recent)} digests, "
+            f"[Digest] calling LLM ({self._config.llm.model}) for {len(recent)} digests, "
             f"{self._holdings and len(self._holdings) or 0} holdings..."
         )
         holdings = [Stock(code=c, name="") for c in self._holdings]

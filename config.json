@@ -1,12 +1,12 @@
 {
   "holdings": [
     {"code": "sz002739", "name": "儒意电影", "cost": 10.3, "shares": 300, "stop_loss": -5.0, "take_profit": 10.0},
-    {"code": "sh600028", "name": "中国石化", "cost": 5.20, "shares": 200},
-    {"code": "sh603000", "name": "人民网", "cost": 20.50, "shares": 200},
-    {"code": "sh600339", "name": "中油工程", "cost": 4.20, "shares": 400},
-    {"code": "sh601949", "name": "中国出版", "cost": 6.20, "shares": 300},
-    {"code": "sh600825", "name": "新华传媒", "cost": 6.70, "shares": 200},
-    {"code": "sz002130", "name": "沃尔核材", "cost": 26.50, "shares": 500}
+    {"code": "sh600028", "name": "中国石化", "cost": 5.20, "shares": 200, "stop_loss": -5.0, "take_profit": 10.0},
+    {"code": "sh603000", "name": "人民网", "cost": 20.50, "shares": 200, "stop_loss": -5.0, "take_profit": 10.0},
+    {"code": "sh600339", "name": "中油工程", "cost": 4.20, "shares": 400, "stop_loss": -5.0, "take_profit": 10.0},
+    {"code": "sh601949", "name": "中国出版", "cost": 6.20, "shares": 300, "stop_loss": -5.0, "take_profit": 10.0},
+    {"code": "sh600825", "name": "新华传媒", "cost": 6.70, "shares": 200, "stop_loss": -5.0, "take_profit": 10.0},
+    {"code": "sz002130", "name": "沃尔核材", "cost": 26.50, "shares": 500, "stop_loss": -5.0, "take_profit": 10.0}
   ],
   "indices": [
     {"code": "sh000001", "name": "上证指数"},
@@ -41,7 +41,7 @@
       "api_key": null,
       "max_per_minute": 12,
       "cache_ttl_hours": 24,
-      "request_timeout_seconds": 60,
+      "request_timeout_seconds": 180,
       "daily_limit": 1000
     },
     "sector": {

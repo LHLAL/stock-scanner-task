@@ -41,10 +41,50 @@ CLS_DIGEST_HEADERS = {
 
 NO_PROXY = {"http": "", "https": ""}
 
-DIGEST_PROMPT = """你是 A 股市场资深分析师。以下是最近 1 天财联社的早间/午间/晚间新闻精选汇总。
+DIGEST_SYSTEM_PROMPT = """你是 A 股市场资深分析师。以下是 user message 给出的最近 1 天财联社的早间/午间/晚间新闻精选汇总。
 请分析这些新闻对【当前 A 股市场、特定行业板块、我的持仓股】的影响。
 
-【我的持仓股 - READONLY ANCHOR（代码-名字对应是事实，禁止修改/编造）】
+我的持仓股是 user message 中的"持仓股"表格，代码-名字对应是 readonly anchor，禁止修改/编造。
+不认识的股票不要写进 holdings_impacts；不确定的方向给 neutral + 低 conf。
+
+输出严格 JSON（不要 markdown 包装）:
+{
+  "summary": "<3 句话以内的整体研判>",
+  "market_sentiment": "<bullish | bearish | neutral | volatile>",
+  "market_confidence": <0.0-1.0>,
+  "sector_impacts": [
+    {"sector": "<行业大类>", "direction": "<bullish|bearish|neutral>",
+     "magnitude": "<high|medium|low>", "reason": "<一句话事实>"}
+  ],
+  "holdings_impacts": [
+    {"code": "<严格使用上表代码>", "name": "<严格使用上表名称>",
+     "impact": "<positive|negative|neutral>", "confidence": <0.0-1.0>,
+     "reason": "<一句话事实>"}
+  ],
+  "key_events": ["<2-5 条最重要事件>"],
+  "narrative_themes": ["<AI算力|CPO|国产替代|...>"],
+  "rationale": "<≤150字综合推理>"
+}
+
+### 置信度校准（严格）
+
+| 档位 | confidence | 含义 |
+|------|-----------|------|
+| 噪声 | 0.0-0.4 | 必须 neutral |
+| 模糊 | 0.45-0.65 | 应该 neutral |
+| 明确 | 0.70-0.85 | 可 directional |
+| 高确信 | 0.90-1.00 | directional |
+
+### 规则
+- 只对持仓股和明确新闻提及的板块给 impact，其他不写
+- holdings_impacts 按 impact 强度排序，最显著在前
+- sector_impacts 只列 bullish/bearish 的，不要 noise
+- 不要给投资建议，只做事实分析
+- 不要 markdown 包装
+"""
+
+
+DIGEST_USER_TEMPLATE = """【我的持仓股 - READONLY ANCHOR（代码-名字对应是事实，禁止修改/编造）】
 {holdings}
 说明：以上表格的"代码"列是唯一锚点（readonly），"名称"列是当前真名。
 若输出 holdings_impacts，请 **必须严格使用上表中的代码和名称**，
@@ -53,43 +93,6 @@ DIGEST_PROMPT = """你是 A 股市场资深分析师。以下是最近 1 天财�
 
 【新闻精选汇总】
 {digests}
-
-请按"卡脖子供应链瓶颈理论"分析。给出严格 JSON:
-
-{{
-  "summary": "<3 句话以内的整体研判>",
-  "market_sentiment": "<bullish | bearish | neutral | volatile>",
-  "market_confidence": <0.0-1.0>,
-  "sector_impacts": [
-    {{"sector": "<行业大类>", "direction": "<bullish|bearish|neutral>",
-     "magnitude": "<high|medium|low>", "reason": "<一句话事实>"}}
-  ],
-  "holdings_impacts": [
-    {{"code": "<严格使用上表中的代码>",
-     "name": "<严格使用上表中的名称，禁止编造>",
-     "impact": "<positive|negative|neutral>", "confidence": <0.0-1.0>,
-     "reason": "<一句话事实>"}}
-  ],
-  "key_events": ["<2-5 条最重要事件>"],
-  "narrative_themes": ["<AI算力|CPO|国产替代|...>"],
-  "rationale": "<≤150字综合推理>"
-}}
-
-### 置信度校准（严格）
-
-| 档位 | confidence | 含义 |
-|------|-----------|------|
-| 噪声 | 0.0-0.4 | 必须 market_sentiment=neutral |
-| 模糊 | 0.45-0.65 | 应该 neutral |
-| 明确 | 0.70-0.85 | 可给出 directional |
-| 高确信 | 0.90-1.00 | 央行/部委级数据 / 明确订单 |
-
-### 规则
-- 只对持仓股和明确新闻提及的板块给 impact，其他不写
-- holdings_impacts 按 impact 强度排序，最显著在前
-- sector_impacts 只列 bullish/bearish 的，不要 noise
-- 不要给投资建议，只做事实分析
-- 不要 markdown 包装
 """
 
 
@@ -267,10 +270,14 @@ class DigestFetcher:
 
 
 class DigestAnalyzer:
-    """LLM impact analysis for a batch of digests."""
+    """LLM impact analysis for a batch of digests.
 
-    def __init__(self, llm: "OllamaAnalyzer"):
-        self._llm = llm
+    Uses LLMClient abstraction; defaults to OllamaClient. To swap
+    providers, pass a different LLMClient implementation.
+    """
+
+    def __init__(self, client):
+        self._client = client
 
     def analyze(
         self,
@@ -291,11 +298,24 @@ class DigestAnalyzer:
             f"【{d.digest_type}】{d.title}\n{d.content[:800]}"
             for d in digests
         )
-        prompt = DIGEST_PROMPT.format(
-            holdings=holdings_text,
-            digests=digests_text,
-        )
-        raw = self._llm._call_raw(prompt)
+        from app.llm.base import ChatMessage, LLMError
+        messages = [
+            ChatMessage("system", DIGEST_SYSTEM_PROMPT),
+            ChatMessage("user", DIGEST_USER_TEMPLATE.format(
+                holdings=holdings_text,
+                digests=digests_text,
+            )),
+        ]
+        try:
+            raw = self._client.chat(
+                messages,
+                model="gpt-oss:20b-cloud",
+                temperature=0.1,
+                response_format={"type": "json_object"},
+            )
+        except LLMError as e:
+            logger.warning(f"[DigestAnalyzer] {e}")
+            return None
         if raw is None:
             return None
         try:
