@@ -1,0 +1,71 @@
+{
+  "_doc": "TEMPLATE — copy to config.json and fill in your values. Sensitive fields (api_key, sign, cookie) should be left as null and supplied via env vars (OLLAMA_API_KEY, ANTHROPIC_API_KEY, CLAUDE_API_KEY) per README.",
+
+  "holdings": [
+    {"code": "sh601398", "name": "工商银行", "cost": 0.0, "shares": 0, "stop_loss": -5.0, "take_profit": 10.0},
+    {"code": "sh600519", "name": "贵州茅台", "cost": 0.0, "shares": 0, "stop_loss": -5.0, "take_profit": 10.0}
+  ],
+  "indices": [
+    {"code": "sh000001", "name": "上证指数"},
+    {"code": "sz399001", "name": "深证成指"}
+  ],
+
+  "stop_loss_pct": -8.0,
+  "take_profit_pct": 15.0,
+  "alert_threshold_pct": 2.0,
+  "sudden_threshold_pct": 1.0,
+  "poll_interval_seconds": 5,
+  "db_path": "price_history.db",
+
+  "news": {
+    "enabled": true,
+
+    "cls": {
+      "_doc": "CLS news fetch — only needed if you have authenticated cookies from a browser session",
+      "sign": null,
+      "cookie": null,
+      "poll_interval_seconds": 20,
+      "off_hours_poll_interval_seconds": 600
+    },
+
+    "filter": {
+      "keyword_threshold": 0.5,
+      "min_save_confidence": 0.25,
+      "min_useful_confidence": 0.5,
+      "min_confidence_for_notify": 0.8,
+      "min_confidence_for_holdings_alert": 0.65,
+      "bottleneck_confidence_floor": 0.65,
+      "max_notifications_per_day": 20
+    },
+
+    "llm": {
+      "_doc": "Set 'provider' to 'ollama' (default) or 'anthropic'. API keys belong in env vars, not here.",
+      "provider": "ollama",
+      "model": "gpt-oss:20b-cloud",
+      "host": "http://localhost:11434",
+      "api_key": null,
+      "max_per_minute": 12,
+      "cache_ttl_hours": 24,
+      "request_timeout_seconds": 180,
+      "daily_limit": 1000,
+      "base_url": null
+    },
+
+    "sector": {
+      "_doc": "sector_dict.json is auto-populated on first run; force_refresh=true to rebuild from akshare",
+      "cache_ttl_days": 7,
+      "force_refresh": false
+    },
+
+    "digest": {
+      "_doc": "CLS /api/csw digest — only needed if you have authenticated cookies from a browser session",
+      "enabled": true,
+      "days_back": 1,
+      "poll_interval_minutes": 120,
+      "min_market_confidence_for_notify": 0.7,
+      "min_holdings_confidence_for_notify": 0.6,
+      "sign": null,
+      "cookie": null
+    }
+  }
+}
