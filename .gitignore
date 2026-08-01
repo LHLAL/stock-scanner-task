@@ -30,3 +30,6 @@ build/
 *.app
 *.dmg
 .coverage/
+
+# Local config (use config.example.json as template)
+config.json
