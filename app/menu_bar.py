@@ -327,9 +327,9 @@ class StockMenuBarApp(rumps.App):
     def _on_news_update(self, analysis, related, hits_holdings) -> None:
         """Callback from NewsMonitor (background thread)."""
         from app.news.models import Stock
-        stock_pairs = [
-            (s.code, s.name) for s in analysis.stocks
-        ]  # preserve order
+        # Convert Stock objects to codes (menu assumes str)
+        related_codes = [s.code for s in related]
+        stock_pairs = [(s.code, s.name) for s in related]  # for name lookup
         with self._news_lock:
             self._pending_news.append({
                 "summary": analysis.summary,
@@ -346,13 +346,8 @@ class StockMenuBarApp(rumps.App):
                 "trend_horizon_years": analysis.trend_horizon_years,
                 "confidence": analysis.confidence,
                 "sectors": list(analysis.sectors),
-                "stock_pairs": stock_pairs,   # [(code, name), ...]
-                "news_category": analysis.news_category,
-                "bottleneck_order_signal": analysis.bottleneck_order_signal,
-                "bottleneck_capacity_signal": analysis.bottleneck_capacity_signal,
-                "bottleneck_margin_signal": analysis.bottleneck_margin_signal,
-                "rationale": analysis.rationale,
-                "related": list(related),
+                "stock_pairs": stock_pairs,   # [(code, name), ...] from holdings
+                "related": related_codes,     # List[str] codes only
                 "hits_holdings": bool(hits_holdings),
                 "analyzed_at": analysis.analyzed_at,
             })
