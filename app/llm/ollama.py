@@ -111,13 +111,27 @@ class OllamaClient(LLMClient):
             check = model or "gpt-oss:20b-cloud"
             available = any(check in m for m in models)
             if not available:
+                similar = sorted(
+                    models,
+                    key=lambda m: -self._name_match_score(check, m),
+                )[:3]
+                similar = [m for m in similar if m != check][:3]
+                hint = f" Did you mean: {similar}?" if similar else ""
                 logger.warning(
-                    f"[OllamaClient] model {check} not in {models[:5]}"
+                    f"[OllamaClient] model {check!r} NOT FOUND at {self._base_url()}. "
+                    f"Available: {models[:8]}.{hint}"
                 )
             return available
         except Exception as e:
-            logger.debug(f"OllamaClient health check failed: {e}")
+            logger.debug(f"[OllamaClient] health check failed: {e}")
             return False
+
+    @staticmethod
+    def _name_match_score(a: str, b: str) -> int:
+        """Simple substring-based similarity (token overlap)."""
+        a_parts = set(a.lower().replace(":", " ").replace("-", " ").split())
+        b_parts = set(b.lower().replace(":", " ").replace("-", " ").split())
+        return len(a_parts & b_parts)
 
     def list_models(self) -> List[str]:
         try:
