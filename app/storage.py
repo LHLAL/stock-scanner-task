@@ -77,6 +77,7 @@ class PriceDB:
                 CREATE TABLE IF NOT EXISTS news_digests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     analyzed_at REAL,
+                    schema_version INTEGER DEFAULT 1,
                     date_range TEXT,
                     sentiment TEXT,
                     confidence REAL,
@@ -313,18 +314,23 @@ class PriceDB:
             conn.commit()
             conn.close()
 
-    def news_save_digest(self, d: dict) -> None:
-        """Save one digest cycle run (one row per LLM analysis)."""
+    def news_save_digest(self, d: dict, schema_version: int = 1) -> None:
+        """Save one digest cycle run (one row per LLM analysis).
+
+        schema_version: bump this when analysis schema changes. Old-version
+        rows are auto-dropped on read (see news_get_recent_digests).
+        """
         with self._lock:
             conn = sqlite3.connect(self._db_path)
             conn.execute(
                 "INSERT INTO news_digests "
-                "(analyzed_at, date_range, sentiment, confidence, summary, rationale, "
-                "sector_impacts, holdings_impacts, key_events, narrative_themes, "
-                "digest_count, digest_hashes) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(analyzed_at, schema_version, date_range, sentiment, confidence, "
+                "summary, rationale, sector_impacts, holdings_impacts, key_events, "
+                "narrative_themes, digest_count, digest_hashes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     d.get("analyzed_at", 0.0),
+                    schema_version,
                     d.get("date_range", ""),
                     d.get("sentiment", "neutral"),
                     d.get("confidence", 0.0),
@@ -341,14 +347,42 @@ class PriceDB:
             conn.commit()
             conn.close()
 
-    def news_get_recent_digests(self, limit: int = 7) -> List[dict]:
-        """Fetch recent digest runs (most recent first)."""
+    def news_migrate_digests(self, current_version: int) -> int:
+        """Drop digests with schema_version < current_version. Returns count dropped.
+
+        Call this from app startup with the latest version constant. Idempotent.
+        """
+        with self._lock:
+            conn = sqlite3.connect(self._db_path)
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM news_digests WHERE schema_version < ?",
+                (current_version,),
+            ).fetchone()[0]
+            conn.execute(
+                "DELETE FROM news_digests WHERE schema_version < ?",
+                (current_version,),
+            )
+            conn.commit()
+            conn.close()
+            if cur:
+                logger.info(
+                    f"[storage] migrated news_digests: dropped {cur} rows "
+                    f"(schema_version < {current_version})"
+                )
+            return cur
+
+    def news_get_recent_digests(self, limit: int = 7, current_version: int = 1) -> List[dict]:
+        """Fetch recent digest runs (most recent first).
+
+        Auto-migrates on read: drops old-version entries before querying.
+        """
+        self.news_migrate_digests(current_version)
         with self._lock:
             conn = sqlite3.connect(self._db_path)
             rows = conn.execute(
-                "SELECT analyzed_at, date_range, sentiment, confidence, summary, "
-                "rationale, sector_impacts, holdings_impacts, key_events, narrative_themes, "
-                "digest_count, digest_hashes "
+                "SELECT analyzed_at, schema_version, date_range, sentiment, confidence, "
+                "summary, rationale, sector_impacts, holdings_impacts, key_events, "
+                "narrative_themes, digest_count, digest_hashes "
                 "FROM news_digests ORDER BY analyzed_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
@@ -357,17 +391,18 @@ class PriceDB:
         for row in rows:
             result.append({
                 "analyzed_at": row[0],
-                "date_range": row[1] or "",
-                "sentiment": row[2] or "neutral",
-                "confidence": float(row[3] or 0.0),
-                "summary": row[4] or "",
-                "rationale": row[5] or "",
-                "sector_impacts": json.loads(row[6]) if row[6] else [],
-                "holdings_impacts": json.loads(row[7]) if row[7] else [],
-                "key_events": json.loads(row[8]) if row[8] else [],
-                "narrative_themes": json.loads(row[9]) if row[9] else [],
-                "digest_count": int(row[10] or 0),
-                "digest_hashes": json.loads(row[11]) if row[11] else [],
+                "schema_version": int(row[1] or 1),
+                "date_range": row[2] or "",
+                "sentiment": row[3] or "neutral",
+                "confidence": float(row[4] or 0.0),
+                "summary": row[5] or "",
+                "rationale": row[6] or "",
+                "sector_impacts": json.loads(row[7]) if row[7] else [],
+                "holdings_impacts": json.loads(row[8]) if row[8] else [],
+                "key_events": json.loads(row[9]) if row[9] else [],
+                "narrative_themes": json.loads(row[10]) if row[10] else [],
+                "digest_count": int(row[11] or 0),
+                "digest_hashes": json.loads(row[12] or "[]"),
             })
         return result
 

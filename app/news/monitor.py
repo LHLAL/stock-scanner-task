@@ -16,6 +16,13 @@ from app.news.models import NewsAnalysis, Stock
 from app.news.sector import SectorMapper
 from app.storage import PriceDB
 
+
+# Bump this when digest schema/output format changes.
+# NewsMonitor.run_digest_cycle passes this to news_save_digest.
+# On read, news_get_recent_digests drops any rows with schema_version
+# less than this value. Stale data from before fixes is auto-purged.
+CURRENT_DIGEST_SCHEMA = 2   # 1 = initial; 2 = holdings_impacts name normalization + validation
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +66,8 @@ class NewsMonitor:
                     cookie=config.digest.cookie,
                 )
                 self._digest_analyzer = DigestAnalyzer(self._analyzer)
+                # Purge old-schema digests so stale LLM output doesn't pollute menu
+                self._db.news_migrate_digests(CURRENT_DIGEST_SCHEMA)
             except Exception as e:
                 logger.warning(f"⚠️ Digest 模块初始化失败: {e}")
 
@@ -551,6 +560,7 @@ class NewsMonitor:
         cleaned_impacts = self._validate_holdings_impact(analysis.holdings_impacts)
         self._db.news_save_digest({
             "analyzed_at": time_mod.time(),
+            "schema_version": CURRENT_DIGEST_SCHEMA,
             "date_range": (f"{recent[0].digest_date} ~ {recent[-1].digest_date}"
                            if len(recent) > 1 else recent[0].digest_date),
             "sentiment": analysis.market_sentiment,

@@ -279,3 +279,74 @@ class TestNewsDigest:
         assert r["date_range"] == "中文日期范围"
         assert r["summary"] == "中文摘要：央行降准释放流动性"
         assert r["sector_impacts"][0]["sector"] == "半导体/AI算力"
+
+
+class TestDigestSchemaVersion:
+    """Migration: drop old-schema digests automatically on save/read."""
+
+    def test_save_digest_with_default_version(self, temp_db_path):
+        from app.storage import PriceDB
+        db = PriceDB(temp_db_path)
+        db.news_save_digest({"analyzed_at": 100.0, "date_range": "x",
+                            "sentiment": "bullish", "confidence": 0.5,
+                            "summary": "s", "rationale": "r",
+                            "sector_impacts": [], "holdings_impacts": [],
+                            "key_events": [], "narrative_themes": [],
+                            "digest_count": 1, "digest_hashes": []})
+        digests = db.news_get_recent_digests()
+        assert len(digests) == 1
+        assert digests[0]["schema_version"] == 1
+
+    def test_save_digest_with_explicit_version(self, temp_db_path):
+        from app.storage import PriceDB
+        db = PriceDB(temp_db_path)
+        db.news_save_digest({"analyzed_at": 100.0, "date_range": "x",
+                            "sentiment": "bullish", "confidence": 0.5,
+                            "summary": "s", "rationale": "r",
+                            "sector_impacts": [], "holdings_impacts": [],
+                            "key_events": [], "narrative_themes": [],
+                            "digest_count": 1, "digest_hashes": []},
+                           schema_version=3)
+        digests = db.news_get_recent_digests()
+        assert digests[0]["schema_version"] == 3
+
+    def test_migrate_drops_old_version(self, temp_db_path):
+        import sqlite3
+        from app.storage import PriceDB
+        db = PriceDB(temp_db_path)
+        # Insert 2 old-version rows manually (bypass save to set schema_version=1)
+        conn = sqlite3.connect(temp_db_path)
+        conn.execute(
+            "INSERT INTO news_digests (analyzed_at, schema_version, date_range, sentiment, confidence, summary, rationale, sector_impacts, holdings_impacts, key_events, narrative_themes, digest_count, digest_hashes) "
+            "VALUES (100.0, 1, 'old1', 'bullish', 0.5, 'a', 'b', '[]', '[]', '[]', '[]', 1, '[]')"
+        )
+        conn.execute(
+            "INSERT INTO news_digests (analyzed_at, schema_version, date_range, sentiment, confidence, summary, rationale, sector_impacts, holdings_impacts, key_events, narrative_themes, digest_count, digest_hashes) "
+            "VALUES (200.0, 2, 'new1', 'bullish', 0.5, 'a', 'b', '[]', '[]', '[]', '[]', 1, '[]')"
+        )
+        conn.commit()
+        conn.close()
+
+        # Before migration
+        digests = db.news_get_recent_digests()
+        assert len(digests) == 2
+
+        # Run migration to v3
+        dropped = db.news_migrate_digests(3)
+        assert dropped == 2  # both old ones dropped (1 and 2 < 3)
+
+        digests = db.news_get_recent_digests()
+        assert len(digests) == 0  # all dropped
+
+    def test_migrate_idempotent(self, temp_db_path):
+        from app.storage import PriceDB
+        db = PriceDB(temp_db_path)
+        db.news_save_digest({"analyzed_at": 100.0, "date_range": "x",
+                            "sentiment": "bullish", "confidence": 0.5,
+                            "summary": "s", "rationale": "r",
+                            "sector_impacts": [], "holdings_impacts": [],
+                            "key_events": [], "narrative_themes": [],
+                            "digest_count": 1, "digest_hashes": []})
+        # Run migration twice, second should be no-op
+        assert db.news_migrate_digests(1) == 0
+        assert db.news_migrate_digests(1) == 0
