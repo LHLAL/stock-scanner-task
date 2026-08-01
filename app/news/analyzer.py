@@ -94,7 +94,7 @@ NEWS_ANALYSIS_PROMPT = """你是 A 股分析师 + 供应链瓶颈研究员。请
   "stocks": [
     {{"code": "sh601398", "name": "工商银行"}},
     {{"code": "sh600519", "name": "贵州茅台"}}
-  ],
+  ]  ← 注: 股票代码-名字对应是事实，禁止凭印象猜名字。如果不确定 name，就只填 code 留空 name。
   "direction": "<bullish | bearish | neutral>",
   "confidence": <0.0-1.0>,
   "time_horizon": "<intraday | next_day | weekly>",

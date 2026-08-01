@@ -1112,3 +1112,58 @@ class TestNormalizeHoldings:
         )
         setup_monitor._normalize_holdings(bad.holdings_impacts)
         assert bad.holdings_impacts[0]["name"] == "工商银行"
+
+
+class TestValidateHoldingsImpact:
+    """JSON Schema validation: drop invalid, override names."""
+
+    def _setup(self, m):
+        m._holdings_config = [
+            type("H", (), {"code": "sh601398", "name": "工商银行"})(),
+            type("H", (), {"code": "sh600028", "name": "中国石化"})(),
+        ]
+
+    def test_validates_and_overrides_name(self, setup_monitor):
+        self._setup(setup_monitor)
+        items = [
+            {"code": "sh601398", "name": "宇宙银行", "impact": "positive"},  # wrong name
+            {"code": "sh600028", "name": "中国石化", "impact": "negative"},  # correct
+        ]
+        result = setup_monitor._validate_holdings_impact(items)
+        assert len(result) == 2
+        # Names overridden from config
+        assert result[0]["name"] == "工商银行"
+        assert result[1]["name"] == "中国石化"
+
+    def test_drops_invalid_code_pattern(self, setup_monitor):
+        self._setup(setup_monitor)
+        items = [
+            {"code": "sh601398", "name": "X", "impact": "positive"},
+            {"code": "INVALID", "name": "X", "impact": "positive"},
+            {"code": "sz00000", "name": "X", "impact": "positive"},  # too short
+            {"code": "sh601949", "name": "X", "impact": "positive"},  # valid pattern, not in user's holdings
+        ]
+        result = setup_monitor._validate_holdings_impact(items)
+        assert len(result) == 1
+        assert result[0]["code"] == "sh601398"
+
+    def test_drops_non_dict_items(self, setup_monitor):
+        self._setup(setup_monitor)
+        items = [
+            "string item",
+            None,
+            123,
+            {"code": "sh601398", "name": "X", "impact": "positive"},
+        ]
+        result = setup_monitor._validate_holdings_impact(items)
+        assert len(result) == 1
+        assert result[0]["code"] == "sh601398"
+
+    def test_empty_list(self, setup_monitor):
+        self._setup(setup_monitor)
+        assert setup_monitor._validate_holdings_impact([]) == []
+
+    def test_drops_when_no_holdings_config(self, setup_monitor):
+        setup_monitor._holdings_config = []
+        items = [{"code": "sh601398", "name": "X"}]
+        assert setup_monitor._validate_holdings_impact(items) == []

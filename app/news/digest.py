@@ -44,8 +44,12 @@ NO_PROXY = {"http": "", "https": ""}
 DIGEST_PROMPT = """你是 A 股市场资深分析师。以下是最近 1 天财联社的早间/午间/晚间新闻精选汇总。
 请分析这些新闻对【当前 A 股市场、特定行业板块、我的持仓股】的影响。
 
-【我的持仓股】
+【我的持仓股 - READONLY ANCHOR（代码-名字对应是事实，禁止修改/编造）】
 {holdings}
+说明：以上表格的"代码"列是唯一锚点（readonly），"名称"列是当前真名。
+若输出 holdings_impacts，请 **必须严格使用上表中的代码和名称**，
+不要修改名称，不要编造表格外的代码，不要凭印象猜名字。
+（下游验证逻辑会丢弃任何不在上表中的代码项）
 
 【新闻精选汇总】
 {digests}
@@ -61,7 +65,8 @@ DIGEST_PROMPT = """你是 A 股市场资深分析师。以下是最近 1 天财�
      "magnitude": "<high|medium|low>", "reason": "<一句话事实>"}}
   ],
   "holdings_impacts": [
-    {{"code": "sh601398", "name": "工商银行",
+    {{"code": "<严格使用上表中的代码>",
+     "name": "<严格使用上表中的名称，禁止编造>",
      "impact": "<positive|negative|neutral>", "confidence": <0.0-1.0>,
      "reason": "<一句话事实>"}}
   ],
@@ -274,9 +279,14 @@ class DigestAnalyzer:
     ) -> Optional["DigestAnalysis"]:
         if not digests:
             return None
-        holdings_text = "\n".join(
-            f"- {s.code} {s.name}" for s in holdings if s.code
-        ) or "（无持仓）"
+        if holdings and any(s.code for s in holdings):
+            holdings_lines = ["| 代码 | 名称 |", "|------|------|"]
+            for s in holdings:
+                if s.code:
+                    holdings_lines.append(f"| {s.code} | {s.name} |")
+            holdings_text = "\n".join(holdings_lines)
+        else:
+            holdings_text = "（无持仓）"
         digests_text = "\n\n".join(
             f"【{d.digest_type}】{d.title}\n{d.content[:800]}"
             for d in digests

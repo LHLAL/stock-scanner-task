@@ -173,6 +173,34 @@ class NewsMonitor:
                 item["name"] = names_by_code[code]
         return items
 
+    def _validate_holdings_impact(self, items: list) -> list:
+        """JSON Schema validation for holdings_impacts.
+
+        Drops entries that:
+          - are not dicts
+          - have code not matching ^s[hz]\d{6}$
+          - have code not in user's holdings (LLM may include unrelated stocks)
+
+        For surviving entries, overrides name from config (defense in depth).
+        """
+        import re
+        pattern = re.compile(r"^s[hz]\d{6}$")
+        valid_codes = {h.code for h in self._holdings_config}
+        names_by_code = {h.code: h.name for h in self._holdings_config}
+        cleaned = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            code = item.get("code", "")
+            if not pattern.match(code):
+                continue
+            if code not in valid_codes:
+                continue
+            # Override name (in case LLM hallucinated)
+            item["name"] = names_by_code[code]
+            cleaned.append(item)
+        return cleaned
+
     def _record_llm_failure(self) -> None:
         """Track consecutive LLM failures; open circuit after 3 in a row."""
         self._consecutive_llm_failures += 1
@@ -518,8 +546,9 @@ class NewsMonitor:
         )
 
         # Persist to DB for menu/UI display and historical comparison
-        # Override LLM-hallucinated stock names with config-grounded names
-        self._normalize_holdings(analysis.holdings_impacts)
+        # Drop entries not in user's holdings (catch LLM hallucinations),
+        # then override names with config-grounded values.
+        cleaned_impacts = self._validate_holdings_impact(analysis.holdings_impacts)
         self._db.news_save_digest({
             "analyzed_at": time_mod.time(),
             "date_range": (f"{recent[0].digest_date} ~ {recent[-1].digest_date}"
@@ -529,7 +558,7 @@ class NewsMonitor:
             "summary": analysis.summary,
             "rationale": analysis.rationale,
             "sector_impacts": analysis.sector_impacts,
-            "holdings_impacts": analysis.holdings_impacts,
+            "holdings_impacts": cleaned_impacts,
             "key_events": analysis.key_events,
             "narrative_themes": analysis.narrative_themes,
             "digest_count": len(recent),

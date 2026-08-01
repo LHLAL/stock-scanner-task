@@ -238,3 +238,39 @@ class TestDigestAnalyzer:
         a.analyze([_make_digest(content="央行降准0.5%释放流动性")], [])
         prompt = llm._call_raw.call_args[0][0]
         assert "央行降准0.5%释放流动性" in prompt
+
+class TestHoldingsTableFormat:
+    """Input to LLM should be markdown table, not bullet list."""
+
+    def test_holdings_with_codes_format_as_table(self):
+        from app.news.digest import DigestAnalyzer, Digest
+        from app.news.models import Stock
+        d = Digest(id=1, title="t", digest_type="morning",
+                   digest_date="2026-07-30", ctime=100, content="x")
+        llm = MagicMock()
+        llm._call_raw.return_value = (
+            '{"summary": "x", "market_sentiment": "bullish", "market_confidence": 0.7}'
+        )
+        analyzer = DigestAnalyzer(llm)
+        holdings = [
+            Stock(code="sh601398", name="工商银行"),
+            Stock(code="sh600028", name="中国石化"),
+        ]
+        analyzer.analyze([d], holdings)
+        prompt = llm._call_raw.call_args[0][0]
+        assert "| 代码 | 名称 |" in prompt
+        assert "| sh601398 | 工商银行 |" in prompt
+        assert "| sh600028 | 中国石化 |" in prompt
+        # Make sure old bullet format is NOT used
+        assert "- sh601398 工商银行" not in prompt
+
+    def test_holdings_empty_shows_placeholder(self):
+        from app.news.digest import DigestAnalyzer, Digest
+        d = Digest(id=1, title="t", digest_type="morning",
+                   digest_date="2026-07-30", ctime=100, content="x")
+        llm = MagicMock()
+        llm._call_raw.return_value = '{"summary": "x"}'
+        analyzer = DigestAnalyzer(llm)
+        analyzer.analyze([d], [])
+        prompt = llm._call_raw.call_args[0][0]
+        assert "（无持仓）" in prompt
