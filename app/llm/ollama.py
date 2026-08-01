@@ -2,7 +2,7 @@
 
 Works for:
 - Local daemon: host="http://localhost:11434", api_key="ollama" (default ignored)
-- Ollama Cloud: host="https://ollama.com", api_key=OLLAMA_API_KEY
+- Ollama Cloud: host="https://ollama.com" (or "https://ollama.com/v1"), api_key=OLLAMA_API_KEY
 """
 import logging
 import os
@@ -21,7 +21,7 @@ class OllamaClient(LLMClient):
         host: str = "http://localhost:11434",
         api_key: Optional[str] = None,
         timeout: int = 30,
-        cache_ttl_seconds: int = 300,
+        cache_ttl_seconds: float = 300,
     ):
         super().__init__(cache_ttl_seconds=cache_ttl_seconds)
         self._host = host.rstrip("/")
@@ -33,6 +33,17 @@ class OllamaClient(LLMClient):
         )
         self._timeout = timeout
         self._auth_failed = False
+
+    def _base_url(self) -> str:
+        """Strip trailing /v1 if present so we can safely append /v1/... paths.
+
+        Accepts both 'https://ollama.com' and 'https://ollama.com/v1' as the user
+        writes them; standardizes to 'https://ollama.com' before appending /v1/... .
+        """
+        h = self._host.rstrip("/")
+        if h.endswith("/v1"):
+            h = h[:-3]
+        return h
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
@@ -63,7 +74,7 @@ class OllamaClient(LLMClient):
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        url = f"{self._host}/v1/chat/completions"
+        url = f"{self._base_url()}/v1/chat/completions"
         try:
             resp = requests.post(
                 url,
@@ -111,7 +122,7 @@ class OllamaClient(LLMClient):
     def list_models(self) -> List[str]:
         try:
             resp = requests.get(
-                f"{self._host}/v1/models",
+                f"{self._base_url()}/v1/models",
                 headers=self._headers(),
                 timeout=5,
             )
